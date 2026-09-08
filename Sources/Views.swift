@@ -1,594 +1,440 @@
 import SwiftUI
 import AppKit
 
+private enum LibraryFilter: String, CaseIterable, Identifiable {
+    case all, noted, system, appStore, downloaded
+    var id: Self { self }
+    var titleKey: String {
+        switch self {
+        case .all: return "library.all"
+        case .noted: return "library.noted"
+        default: return "category.\(rawValue)"
+        }
+    }
+    var symbol: String {
+        switch self {
+        case .all: return "square.grid.2x2"
+        case .noted: return "note.text"
+        default: return AppCategory(rawValue: rawValue)!.symbolName
+        }
+    }
+    func contains(_ app: AppEntry, store: NotesStore) -> Bool {
+        switch self {
+        case .all: return true
+        case .noted: return !store.note(for: app.path).isEmpty
+        default: return AppCategory.of(app).rawValue == rawValue
+        }
+    }
+}
+
 struct ManagerView: View {
+    @EnvironmentObject private var preferences: AppPreferences
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var suggestionStore = SuggestionStore.shared
+    @ObservedObject var library = AppLibrary.shared
     @State private var query = ""
     @State private var selection: String?
-    @State private var category: AppCategory = .appStore
-    @State private var apps: [AppEntry] = []
-    @State private var isScanning = false
+    @State private var filter: LibraryFilter? = .all
+    let onSettings: () -> Void
+    let onSearch: () -> Void
+
+    private var activeFilter: LibraryFilter { filter ?? .all }
+    private var filtered: [AppEntry] {
+        let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        return library.apps.filter {
+            activeFilter.contains($0, store: store) &&
+                (term.isEmpty || $0.matches(term, note: store.note(for: $0.path)))
+        }
+    }
+    private var selectedApp: AppEntry? { library.apps.first { $0.id == selection } }
 
     var body: some View {
         NavigationSplitView {
             sidebar
+                .navigationSplitViewColumnWidth(min: 180, ideal: 195, max: 240)
+        } content: {
+            appList
+                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 380)
         } detail: {
-            if let app = selectedApp {
-                DetailView(app: app)
-            } else {
-                VStack(spacing: 8) {
-                    Text("选一个应用")
-                        .font(.headline)
-                    Text("左边点一下，右边就能写备注了")
-                        .foregroundStyle(.secondary)
+            Group {
+                if let app = selectedApp {
+                    DetailView(app: app, store: store, suggestionStore: suggestionStore)
+                        .id(app.id)
+                } else {
+                    EmptyState(symbol: "note.text", title: preferences.text("detail.empty"),
+                               message: preferences.text("detail.empty.help"))
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .background(Color(nsColor: .textBackgroundColor))
                 }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+            .navigationSplitViewColumnWidth(min: 380, ideal: 520)
+        }
+        .navigationSplitViewStyle(.balanced)
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                Button(action: onSearch) {
+                    Label(preferences.text("menu.search"), systemImage: "magnifyingglass")
+                }
+                .help(preferences.text("menu.search") + "  ⌃⌥N")
+                Button(action: onSettings) {
+                    Label(preferences.text("settings.open"), systemImage: "gearshape")
+                }
+                .help(preferences.text("settings.open") + "  ⌘,")
             }
         }
-        .frame(minWidth: 900, minHeight: 600)
+        .frame(minWidth: 880, minHeight: 580)
         .onAppear {
-            if apps.isEmpty { reload() }
+            library.scanIfNeeded()
+            reconcileSelection()
         }
-        .onChange(of: category) { _, newValue in
-            let ids = filtered.map(\.id)
-            let shouldSelectFirst = selection.map { !ids.contains($0) } ?? true
-            if shouldSelectFirst { selection = ids.first }
-        }
-    }
-
-    private var selectedApp: AppEntry? {
-        apps.first { $0.id == selection }
-    }
-
-    private var filtered: [AppEntry] {
-        let categorized = apps.filter { AppCategory.of($0) == category }
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !q.isEmpty else { return categorized }
-        return categorized.filter { app in
-            app.name.localizedCaseInsensitiveContains(q)
-                || app.fileName.localizedCaseInsensitiveContains(q)
-                || store.note(for: app.path).localizedCaseInsensitiveContains(q)
-                || (app.bundleID ?? "").localizedCaseInsensitiveContains(q)
-        }
+        .onChange(of: filter) { _, _ in selection = filtered.first?.id }
+        .onChange(of: query) { _, _ in reconcileSelection() }
+        .onChange(of: library.apps) { _, _ in reconcileSelection() }
     }
 
     private var sidebar: some View {
         VStack(spacing: 0) {
-            CategoryTabBar(counts: categoryCounts, selection: $category)
-                .padding(.horizontal, 12)
-                .padding(.top, 10)
-                .padding(.bottom, 4)
-
-            List(selection: $selection) {
-                if filtered.isEmpty {
-                    VStack(spacing: 8) {
-                        Image(systemName: category.symbolName)
-                            .font(.system(size: 24, weight: .medium))
-                            .foregroundStyle(category.tint.opacity(0.65))
-                        Text("没有应用")
-                            .font(.subheadline.weight(.medium))
-                        Text(query.isEmpty ? "这个分类暂时没有内容" : "换个关键词试试")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 36)
-                } else {
-                    ForEach(filtered) { app in
-                        SidebarRow(
-                            app: app,
-                            note: store.note(for: app.path),
-                            suggestion: suggestionStore.suggestion(for: app.path)
-                        )
-                        .tag(app.id)
-                    }
+            List(selection: $filter) {
+                Section(preferences.text("library.title")) {
+                    filterRow(.all)
+                    filterRow(.noted)
+                }
+                Section(preferences.text("library.sources")) {
+                    filterRow(.system)
+                    filterRow(.appStore)
+                    filterRow(.downloaded)
                 }
             }
             .listStyle(.sidebar)
-            .searchable(text: $query, placement: .sidebar, prompt: "搜应用名或备注")
-
+            .safeAreaInset(edge: .top, spacing: 0) {
+                HStack(spacing: 10) {
+                    Image(systemName: "note.text")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(Color.accentColor)
+                        .frame(width: 34, height: 34)
+                        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text("AppNotes").font(.headline)
+                        Text(preferences.text("app.title")).font(.caption).foregroundStyle(.secondary)
+                    }
+                    Spacer(minLength: 0)
+                }
+                .padding(16)
+            }
             Divider()
-            ManagerBottomBar(
-                filteredCount: filtered.count,
-                totalCount: apps.filter { AppCategory.of($0) == category }.count,
-                noteCount: store.count,
-                suggestionCount: suggestionStore.count,
-                fetchEnabled: !apps.isEmpty,
-                onReload: reload,
-                onFetch: startFetch
-            )
-        }
-        .frame(minWidth: 260)
-        .overlay {
-            if isScanning {
-                ProgressView().controlSize(.small)
-            }
-        }
-    }
-
-    private func startFetch() {
-        let list = apps
-        Task { await DescriptionFetcher.shared.fetchAll(apps: list, progress: FetchProgress.shared) }
-    }
-
-    private func reload() {
-        isScanning = true
-        DispatchQueue.global(qos: .userInitiated).async {
-            let scanned = AppScanner.scan()
-            DispatchQueue.main.async {
-                self.apps = scanned
-                self.isScanning = false
-            }
-        }
-    }
-
-    private var categoryCounts: [AppCategory: Int] {
-        Dictionary(grouping: apps, by: { AppCategory.of($0) })
-            .mapValues(\.count)
-    }
-}
-
-struct CategoryTabBar: View {
-    let counts: [AppCategory: Int]
-    @Binding var selection: AppCategory
-
-    var body: some View {
-        HStack(spacing: 4) {
-            ForEach(AppCategory.allCases) { item in
-                let isSelected = selection == item
-
-                Button {
-                    withAnimation(.snappy(duration: 0.18)) {
-                        selection = item
-                    }
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: item.symbolName)
-                            .font(.system(size: 10, weight: .semibold))
-                        Text(item.tabTitle)
-                            .font(.system(size: 12, weight: .semibold))
-                            .lineLimit(1)
-                        Text("\(counts[item, default: 0])")
-                            .font(.system(size: 10, weight: .semibold))
-                            .padding(.horizontal, 4)
-                            .padding(.vertical, 1)
-                            .background(
-                                isSelected ? Color.primary.opacity(0.12) : Color.primary.opacity(0.06),
-                                in: Capsule()
-                            )
-                    }
-                    .frame(maxWidth: .infinity)
-                    .padding(.vertical, 6)
-                    .background(
-                        isSelected ? item.tint.opacity(0.18) : Color.clear,
-                        in: RoundedRectangle(cornerRadius: 8)
-                    )
-                    .foregroundStyle(isSelected ? item.tint : Color.secondary)
-                    .contentShape(Rectangle())
+            Button(action: onSearch) {
+                HStack {
+                    Label(preferences.text("menu.search"), systemImage: "magnifyingglass")
+                    Spacer(minLength: 4)
+                    Text("⌃⌥N").foregroundStyle(.tertiary)
                 }
-                .buttonStyle(.plain)
-                .help(item.title)
+                .font(.caption)
+                .padding(16)
+                .contentShape(Rectangle())
             }
+            .buttonStyle(.plain)
+            .foregroundStyle(.secondary)
         }
-        .padding(3)
-        .background(.quinary, in: RoundedRectangle(cornerRadius: 10))
+        .navigationTitle(preferences.text("app.title"))
     }
-}
 
-// 进度条独立成一个视图，只让它自己监听 FetchProgress，
-// 避免抓取时整个 ManagerView 频繁重建导致 List 的 selection 丢失。
-struct ManagerBottomBar: View {
-    @ObservedObject var progress = FetchProgress.shared
-    let filteredCount: Int
-    let totalCount: Int
-    let noteCount: Int
-    let suggestionCount: Int
-    let fetchEnabled: Bool
-    let onReload: () -> Void
-    let onFetch: () -> Void
-
-    var body: some View {
-        VStack(spacing: 6) {
-            HStack {
-                Text("\(filteredCount)/\(totalCount) 个应用 · \(noteCount) 条备注 · \(suggestionCount) 条建议")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                Spacer()
-                Button(action: onReload) {
-                    Image(systemName: "arrow.clockwise")
+    private func filterRow(_ item: LibraryFilter) -> some View {
+        HStack {
+            Label {
+                Text(preferences.text(item.titleKey))
+            } icon: {
+                if filter == item {
+                    Image(systemName: item.symbol).foregroundStyle(.primary)
+                } else {
+                    Image(systemName: item.symbol).foregroundStyle(Color.accentColor)
                 }
-                .buttonStyle(.borderless)
-                .help("重新扫描已安装的应用")
             }
+            Spacer(minLength: 4)
+            Text(library.apps.filter { item.contains($0, store: store) }.count, format: .number)
+                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3)
+        .listItemTint(.accentColor)
+        .tag(item)
+    }
 
-            if progress.isRunning {
-                HStack(spacing: 8) {
-                    ProgressView(value: Double(progress.current), total: Double(max(progress.total, 1)))
-                    Text("\(progress.current)/\(progress.total)  \(progress.currentName)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                    Button("取消") { progress.cancelRequested = true }
-                        .font(.caption)
-                }
-            } else {
-                HStack(spacing: 8) {
-                    Button("抓取 Mac App Store 简介", action: onFetch)
-                        .disabled(!fetchEnabled)
-                    Text("按本地 App Store ID 精确查询")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
+    private var appList: some View {
+        VStack(spacing: 0) {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(alignment: .firstTextBaseline) {
+                    Text(preferences.text(activeFilter.titleKey)).font(.title3.weight(.semibold))
                     Spacer()
-                    if progress.found > 0 {
-                        Text("上次抓到 \(progress.found) 条")
-                            .font(.caption)
-                            .foregroundStyle(.tertiary)
+                    Text(preferences.text("library.count", filtered.count))
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                }
+                SearchField(text: $query, prompt: preferences.text("search.placeholder"))
+            }
+            .padding(16)
+            Divider()
+            List(selection: $selection) {
+                ForEach(filtered) { app in
+                    SidebarRow(app: app, note: store.note(for: app.path),
+                               suggestion: suggestionStore.suggestion(for: app.path))
+                        .listRowSeparator(.hidden)
+                        .tag(app.id)
+                        .contextMenu {
+                            Button(preferences.text("detail.open")) { app.open() }
+                            Button(preferences.text("detail.reveal")) { app.reveal() }
+                        }
+                }
+            }
+            .listStyle(.inset)
+            .accessibilityLabel(preferences.text("library.list"))
+            .overlay {
+                if library.isScanning && library.apps.isEmpty {
+                    ProgressView(preferences.text("library.scanning")).controlSize(.small)
+                } else if filtered.isEmpty {
+                    listEmptyState
+                }
+            }
+            Divider()
+            ManagerBottomBar(isScanning: library.isScanning, apps: library.apps, onReload: library.refresh)
+        }
+        .background(Color(nsColor: .controlBackgroundColor))
+    }
+
+    @ViewBuilder private var listEmptyState: some View {
+        VStack(spacing: 12) {
+            if !query.isEmpty {
+                EmptyState(symbol: "magnifyingglass", title: preferences.text("search.noResults"),
+                           message: preferences.text("search.tryAgain"), compact: true)
+                Button(preferences.text("search.clear")) { query = "" }
+            } else if activeFilter == .noted {
+                EmptyState(symbol: "square.and.pencil", title: preferences.text("library.noNotes"),
+                           message: preferences.text("library.noNotes.help"), compact: true)
+                Button(preferences.text("library.browse")) { filter = .all }
+            } else {
+                EmptyState(symbol: activeFilter.symbol, title: preferences.text("library.empty"),
+                           message: preferences.text("library.empty.help"), compact: true)
+            }
+        }
+        .padding(16)
+    }
+
+    private func reconcileSelection() {
+        if let selection, filtered.contains(where: { $0.id == selection }) { return }
+        selection = filtered.first?.id
+    }
+}
+
+// Progress observation stays local so incoming descriptions do not rebuild the navigation.
+struct ManagerBottomBar: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    @ObservedObject private var progress = FetchProgress.shared
+    let isScanning: Bool
+    let apps: [AppEntry]
+    let onReload: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if progress.isRunning {
+                HStack {
+                    Text(preferences.text(progress.cancelRequested ? "fetch.cancelling" : "fetch.action"))
+                        .font(.caption.weight(.medium))
+                    Spacer()
+                    Button(preferences.text("fetch.cancel")) { progress.cancelRequested = true }
+                        .buttonStyle(.borderless).font(.caption).disabled(progress.cancelRequested)
+                }
+                ProgressView(value: Double(progress.current), total: Double(max(progress.total, 1)))
+                HStack {
+                    Text(progress.currentName).lineLimit(1)
+                    Spacer()
+                    Text(preferences.text("fetch.progress", progress.current, progress.total)).monospacedDigit()
+                }
+                .font(.caption).foregroundStyle(.secondary)
+            } else {
+                HStack {
+                    Button {
+                        Task { await DescriptionFetcher.shared.fetchAll(apps: apps, progress: progress) }
+                    } label: {
+                        Label(preferences.text("fetch.action"), systemImage: "text.badge.plus")
                     }
+                    .help(preferences.text("fetch.help")).disabled(apps.isEmpty || isScanning)
+                    Spacer(minLength: 4)
+                    Button(action: onReload) {
+                        Label(preferences.text("library.scan"), systemImage: "arrow.clockwise")
+                            .labelStyle(.iconOnly)
+                    }
+                    .help(preferences.text("library.scan")).disabled(isScanning)
+                }
+                .buttonStyle(.borderless).font(.callout)
+                if isScanning {
+                    Text(preferences.text("library.scanning")).font(.caption).foregroundStyle(.secondary)
+                } else if progress.found > 0 {
+                    Text(preferences.text("fetch.found", progress.found)).font(.caption).foregroundStyle(.secondary)
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(14)
     }
 }
 
 struct DetailView: View {
+    @EnvironmentObject private var preferences: AppPreferences
     let app: AppEntry
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var suggestionStore = SuggestionStore.shared
-
+    @FocusState private var isEditing: Bool
+    private var note: String { store.note(for: app.path) }
     private var binding: Binding<String> {
-        Binding(
-            get: { store.note(for: app.path) },
-            set: { store.set($0, for: app.path) }
-        )
+        Binding(get: { note }, set: { store.set($0, for: app.path) })
     }
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 14) {
-                HStack(alignment: .top, spacing: 14) {
-                    Image(nsImage: IconCache.icon(for: app.path))
-                        .resizable()
-                        .frame(width: 64, height: 64)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text(app.name).font(.title2)
-                        if let v = app.version {
-                            Text(v).font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    if let b = app.bundleID {
-                        Text(b).font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-                    }
-                    Text(app.path)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                        .textSelection(.enabled)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
+            VStack(alignment: .leading, spacing: 28) {
+                header
+                Divider()
+                editor
+                if note.isEmpty, let suggestion = suggestionStore.suggestion(for: app.path) {
+                    suggestionCard(suggestion)
                 }
-                Spacer()
-                VStack(alignment: .trailing, spacing: 6) {
-                    Button("打开") {
-                        NSWorkspace.shared.open(URL(fileURLWithPath: app.path))
-                    }
-                    Button("在 Finder 中显示") {
-                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: app.path)])
-                    }
-                }
-                .fixedSize()
+                appInformation
             }
-
-            Divider()
-
-            if store.note(for: app.path).isEmpty, let suggestion = suggestionStore.suggestion(for: app.path) {
-                VStack(alignment: .leading, spacing: 8) {
-                    HStack(spacing: 6) {
-                        Image(systemName: "sparkles")
-                            .foregroundStyle(.secondary)
-                        Text(suggestion.source == "brew" ? "Homebrew 简介" : "Mac App Store 简介")
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        if !suggestion.seller.isEmpty {
-                            Text("· \(suggestion.seller)")
-                                .font(.caption)
-                                .foregroundStyle(.tertiary)
-                        }
-                        if suggestion.score < 0.85 {
-                            Text("可能不匹配")
-                                .font(.caption2)
-                                .padding(.horizontal, 6)
-                                .padding(.vertical, 2)
-                                .background(
-                                    Capsule().fill(Color.orange.opacity(0.18))
-                                )
-                                .foregroundStyle(.orange)
-                        }
-                        Spacer()
-                    }
-                    Text(suggestion.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    HStack(spacing: 10) {
-                        Button("采用为备注") { store.set(suggestion.text, for: app.path) }
-                        Button("忽略") { suggestionStore.ignore(app.path) }
-                        Spacer()
-                    }
-                    .buttonStyle(.borderless)
-                    .font(.caption)
-                }
-                .padding(12)
-                .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(Color.secondary.opacity(0.15), lineWidth: 0.5)
-                )
-            }
-
-            HStack {
-                Text("备注").font(.headline)
-                Spacer()
-                Text("\(store.note(for: app.path).count) 字")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-
-            ZStack(alignment: .topLeading) {
-                TextEditor(text: binding)
-                    .font(.system(size: 14))
-                    .padding(6)
-                    .frame(minHeight: 180)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 6)
-                            .stroke(Color.secondary.opacity(0.25), lineWidth: 1)
-                    )
-                if store.note(for: app.path).isEmpty {
-                    Text("它是干嘛的？什么时候会用到？随便写点什么……")
-                        .font(.system(size: 14))
-                        .foregroundStyle(Color.secondary.opacity(0.6))
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 12)
-                        .allowsHitTesting(false)
-                }
-            }
-
-            Text("改动会自动保存，⌘W 关窗口即可")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            }
-            .padding(18)
-            .frame(maxWidth: .infinity, alignment: .topLeading)
+            .padding(28)
+            .frame(maxWidth: 780, alignment: .leading)
+            .frame(maxWidth: .infinity)
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .id(app.id)
-    }
-}
-
-struct SearchOverlayView: View {
-    @ObservedObject var store = NotesStore.shared
-    let apps: [AppEntry]
-    let onClose: () -> Void
-
-    @State private var query = ""
-    @State private var highlighted = 0
-    @FocusState private var isFocused: Bool
-
-    private var results: [AppEntry] {
-        let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        let base = apps
-        guard !q.isEmpty else {
-            return Array(base.filter { !store.note(for: $0.path).isEmpty }.prefix(40))
-        }
-        return Array(
-            base.filter { app in
-                app.name.localizedCaseInsensitiveContains(q)
-                    || app.fileName.localizedCaseInsensitiveContains(q)
-                    || store.note(for: app.path).localizedCaseInsensitiveContains(q)
-            }.prefix(40))
+        .background(Color(nsColor: .textBackgroundColor))
     }
 
-    var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-                TextField("搜应用名或备注", text: $query)
-                    .textFieldStyle(.plain)
-                    .font(.system(size: 16))
-                    .focused($isFocused)
-                    .onSubmit { openHighlighted() }
-                    .onChange(of: query) { _ in highlighted = 0 }
-                Text("Esc 关闭")
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 12)
-
-            Divider()
-
-            if results.isEmpty {
-                VStack(spacing: 6) {
-                    Text("没找到")
-                        .foregroundStyle(.secondary)
-                    Text("按 Esc 或者点外面关掉")
-                        .font(.caption)
-                        .foregroundStyle(.tertiary)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                ScrollView {
-                    LazyVStack(spacing: 0) {
-                        ForEach(Array(results.enumerated()), id: \.element.id) { index, app in
-                            ResultRow(
-                                app: app,
-                                note: store.note(for: app.path),
-                                isHighlighted: index == highlighted
-                            ) {
-                                highlighted = index
-                                openHighlighted()
-                            }
-                            .onHover { inside in
-                                if inside { highlighted = index }
-                            }
-                        }
-                    }
-                    .padding(.vertical, 4)
-                }
-            }
-        }
-        .frame(width: 560)
-        .frame(minHeight: 120, maxHeight: 460)
-        .background(Color(NSColor.windowBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 12))
-        .onAppear { isFocused = true }
-        .onExitCommand(perform: onClose)
-        .onMoveCommand { direction in
-            switch direction {
-            case .down: moveDown()
-            case .up: moveUp()
-            default: break
-            }
-        }
-    }
-
-    private func moveDown() {
-        highlighted = min(highlighted + 1, max(results.count - 1, 0))
-    }
-
-    private func moveUp() {
-        highlighted = max(highlighted - 1, 0)
-    }
-
-    private func openHighlighted() {
-        guard results.indices.contains(highlighted) else { return }
-        let app = results[highlighted]
-        NSWorkspace.shared.open(URL(fileURLWithPath: app.path))
-        onClose()
-    }
-}
-
-struct ResultRow: View {
-    let app: AppEntry
-    let note: String
-    let isHighlighted: Bool
-    let action: () -> Void
-
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 10) {
-                Image(nsImage: IconCache.icon(for: app.path))
-                    .resizable()
-                    .frame(width: 28, height: 28)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(app.name)
-                        .font(.system(size: 14, weight: .medium))
-                        .lineLimit(1)
-                    Text(note.isEmpty ? "还没有备注" : note)
-                        .font(.caption)
-                        .foregroundStyle(note.isEmpty ? .tertiary : .secondary)
-                        .lineLimit(2)
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            HStack(spacing: 16) {
+                AppIcon(app: app, size: 64)
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(app.name).font(.system(size: 25, weight: .semibold)).textSelection(.enabled)
+                    Label(preferences.text(AppCategory.of(app).titleKey), systemImage: AppCategory.of(app).symbolName)
+                        .font(.callout).foregroundStyle(.secondary)
                 }
                 Spacer(minLength: 0)
             }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 7)
-            .contentShape(Rectangle())
+            HStack(spacing: 10) {
+                Button(action: app.open) {
+                    Label(preferences.text("detail.open"), systemImage: "arrow.up.forward")
+                }
+                .buttonStyle(.borderedProminent)
+                Button(action: app.reveal) {
+                    Label(preferences.text("detail.reveal"), systemImage: "folder")
+                }
+                .buttonStyle(.bordered)
+            }
+            .controlSize(.regular)
         }
-        .buttonStyle(.plain)
-        .background(
-            RoundedRectangle(cornerRadius: 5)
-                .fill(isHighlighted ? Color.accentColor.opacity(0.18) : Color.clear)
-        )
-        .padding(.horizontal, 6)
+    }
+
+    private var editor: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(preferences.text("detail.note"), systemImage: "square.and.pencil").font(.headline)
+                Spacer()
+                Text(preferences.text("detail.characters", note.count))
+                    .font(.caption).foregroundStyle(.tertiary).monospacedDigit()
+            }
+            ZStack(alignment: .topLeading) {
+                TextEditor(text: binding)
+                    .font(.system(size: 14)).lineSpacing(5)
+                    .scrollContentBackground(.hidden).padding(12).focused($isEditing)
+                    .accessibilityLabel(preferences.text("detail.note"))
+                if note.isEmpty {
+                    Text(preferences.text("detail.placeholder"))
+                        .font(.system(size: 14)).lineSpacing(5).foregroundStyle(.tertiary)
+                        .padding(.horizontal, 17).padding(.vertical, 12)
+                        .allowsHitTesting(false).accessibilityHidden(true)
+                }
+            }
+            .frame(minHeight: 210, idealHeight: 250)
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+            .overlay {
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isEditing ? Color.accentColor.opacity(0.65) : Color.primary.opacity(0.1),
+                                  lineWidth: isEditing ? 2 : 1)
+                    .allowsHitTesting(false)
+            }
+            Label(preferences.text("detail.autosave"), systemImage: "checkmark.circle")
+                .font(.caption).foregroundStyle(.secondary)
+        }
+    }
+
+    private func suggestionCard(_ suggestion: AppSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack {
+                Label(preferences.text(suggestion.source == "brew" ? "suggestion.brew" : "suggestion.appstore"),
+                      systemImage: "text.quote").font(.callout.weight(.medium))
+                Spacer(minLength: 0)
+                if suggestion.score < 0.85 {
+                    Text(preferences.text("suggestion.mismatch")).font(.caption).foregroundStyle(.orange)
+                }
+            }
+            Text(suggestion.text).font(.callout).foregroundStyle(.secondary)
+                .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+            HStack {
+                Button(preferences.text("suggestion.use")) { store.set(suggestion.text, for: app.path) }
+                Button(preferences.text("suggestion.ignore")) { suggestionStore.ignore(app.path) }
+                    .foregroundStyle(.secondary)
+                Spacer(minLength: 0)
+            }
+            .buttonStyle(.borderless)
+            if !suggestion.seller.isEmpty {
+                Text(suggestion.seller).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
+            }
+        }
+        .padding(16)
+        .background(Color.accentColor.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+        .overlay {
+            RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.12), lineWidth: 1)
+        }
+    }
+
+    private var appInformation: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text(preferences.text("detail.info")).font(.headline)
+            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 12) {
+                if let version = app.version { informationRow("detail.version", value: version) }
+                if let bundleID = app.bundleID { informationRow("detail.bundle", value: bundleID) }
+                informationRow("detail.location", value: app.path)
+            }
+            .font(.callout)
+        }
+        .padding(.bottom, 8)
+    }
+
+    private func informationRow(_ key: String, value: String) -> some View {
+        GridRow(alignment: .top) {
+            Text(preferences.text(key)).foregroundStyle(.secondary).fixedSize()
+            Text(value).textSelection(.enabled).foregroundStyle(.secondary)
+                .lineLimit(2).truncationMode(.middle).help(value)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
     }
 }
 
-struct HUDView: View {
-    let appName: String
-    let note: String
-
-    var body: some View {
-        HStack(spacing: 10) {
-            Text(appName)
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(.primary)
-            Text(note)
-                .font(.system(size: 13))
-                .foregroundStyle(.secondary)
-                .lineLimit(2)
-        }
-        .padding(.horizontal, 16)
-        .padding(.vertical, 10)
-        .background(
-            RoundedRectangle(cornerRadius: 10)
-                .fill(Color(NSColor.windowBackgroundColor).opacity(0.96))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(Color.secondary.opacity(0.2), lineWidth: 0.5)
-        )
-        .fixedSize(horizontal: false, vertical: true)
-    }
-}
-
-// 列表行：行高永远固定（两行槽位），避免建议陆续出现时整列高度跳变
 struct SidebarRow: View {
+    @EnvironmentObject private var preferences: AppPreferences
     let app: AppEntry
     let note: String
     let suggestion: AppSuggestion?
 
     var body: some View {
-        HStack(spacing: 8) {
-            Image(nsImage: IconCache.icon(for: app.path))
-                .resizable()
-                .frame(width: 22, height: 22)
-            VStack(alignment: .leading, spacing: 2) {
-                Text(app.name)
-                    .font(.system(size: 13))
-                    .lineLimit(1)
-                Text(secondaryLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                    .frame(height: 14, alignment: .top)   // 固定槽位高度
+        HStack(spacing: 10) {
+            AppIcon(app: app, size: 34)
+            VStack(alignment: .leading, spacing: 4) {
+                Text(app.name).font(.body.weight(.medium)).lineLimit(1)
+                Text(note.isEmpty ? (suggestion?.text ?? preferences.text("detail.noNote")) : note)
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(1).frame(height: 15, alignment: .top)
             }
             Spacer(minLength: 0)
-            CategoryBadge(category: AppCategory.of(app))
+            if !note.isEmpty {
+                Image(systemName: "note.text").font(.caption).foregroundStyle(.tertiary)
+            }
         }
-        .padding(.vertical, 2)
-        .tag(app.id)
-    }
-
-    private var secondaryLine: String {
-        if !note.isEmpty { return note }
-        if let s = suggestion { return s.text }
-        return " "   // 占位，保持高度一致
-    }
-}
-
-struct CategoryBadge: View {
-    let category: AppCategory
-
-    var body: some View {
-        Image(systemName: category.symbolName)
-            .font(.system(size: 9, weight: .semibold))
-            .foregroundStyle(category.tint)
-            .frame(width: 17, height: 17)
-            .background(category.tint.opacity(0.14), in: Circle())
-            .help(category.title)
-    }
-}
-
-extension AppCategory {
-    var tint: Color {
-        switch self {
-        case .system: return .gray
-        case .appStore: return .blue
-        case .downloaded: return .orange
-        }
+        .padding(.vertical, 7)
+        .accessibilityElement(children: .combine)
     }
 }

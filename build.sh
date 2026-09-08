@@ -24,9 +24,10 @@ xcrun swiftc \
   -framework SwiftUI \
   -framework Carbon \
   -o "$CONTENTS/MacOS/$NAME" \
-  "$SRC/main.swift" "$SRC/Models.swift" "$SRC/Views.swift" "$SRC/Fetcher.swift"
+  "$SRC"/*.swift
 
 cp Info.plist "$CONTENTS/Info.plist"
+cp -R Resources/. "$CONTENTS/Resources/"
 
 if [ -f "AppIcon.icns" ]; then
   cp AppIcon.icns "$CONTENTS/Resources/AppIcon.icns"

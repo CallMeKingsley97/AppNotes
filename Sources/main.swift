@@ -2,27 +2,30 @@ import Cocoa
 import SwiftUI
 import Carbon.HIToolbox
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
     private var statusItem: NSStatusItem!
     private var managerWindow: NSWindow?
+    private var settingsWindow: NSWindow?
     private var searchPanel: FloatingPanel?
     private var hudPanel: NSPanel?
     private var hudTimer: Timer?
-    private var cachedApps: [AppEntry] = []
+    private let preferences = AppPreferences.shared
+    private let library = AppLibrary.shared
     private var hudMenuItem = NSMenuItem()
-
-    private var hudEnabled: Bool {
-        get { UserDefaults.standard.bool(forKey: "hudEnabled") }
-        set { UserDefaults.standard.set(newValue, forKey: "hudEnabled") }
-    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        NSApp.appearance = preferences.appearance.nativeAppearance
         setupStatusItem()
+        setupApplicationMenu()
+        NotificationCenter.default.addObserver(self, selector: #selector(preferencesChanged),
+                                               name: AppPreferences.didChange, object: preferences)
+        NotificationCenter.default.addObserver(self, selector: #selector(preferencesChanged),
+                                               name: NSLocale.currentLocaleDidChangeNotification, object: nil)
         setupKeyMonitor()
         registerHotkey()
         observeAppSwitch()
-        refreshApps()
+        library.refresh()
 
         if !UserDefaults.standard.bool(forKey: "didOpenManagerOnce") {
             UserDefaults.standard.set(true, forKey: "didOpenManagerOnce")
@@ -40,27 +43,99 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     // MARK: - Menu bar
 
     private func setupStatusItem() {
-        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        if statusItem == nil {
+            statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        }
         if let button = statusItem.button {
             button.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "AppNotes")
-            button.toolTip = "AppNotes · 应用备注"
+            button.toolTip = "AppNotes · " + preferences.text("app.title")
         }
 
         let menu = NSMenu()
-        let managerItem = NSMenuItem(title: "管理备注…", action: #selector(openManager), keyEquivalent: "")
-        let searchItem = NSMenuItem(title: "搜索备注   ⌃⌥N", action: #selector(showSearchAction), keyEquivalent: "")
-        hudMenuItem = NSMenuItem(title: "切换 App 时显示备注", action: #selector(toggleHUD), keyEquivalent: "")
-        hudMenuItem.state = hudEnabled ? .on : .off
-        let rescanItem = NSMenuItem(title: "重新扫描应用", action: #selector(rescan), keyEquivalent: "")
-        let fetchItem = NSMenuItem(title: "抓取 Mac App Store 简介…", action: #selector(fetchDescriptions), keyEquivalent: "")
-        let quitItem = NSMenuItem(title: "退出", action: #selector(quit), keyEquivalent: "q")
-
-        for item in [managerItem, searchItem, rescanItem, fetchItem, hudMenuItem, quitItem] {
-            item.target = self
-            menu.addItem(item)
-        }
-        menu.insertItem(NSMenuItem.separator(), at: 4)
+        menu.addItem(menuItem("menu.manager", action: #selector(openManager)))
+        let searchItem = menuItem("menu.search", action: #selector(showSearchAction), key: "n")
+        searchItem.keyEquivalentModifierMask = [.control, .option]
+        menu.addItem(searchItem)
+        menu.addItem(.separator())
+        menu.addItem(menuItem("library.scan", action: #selector(rescan)))
+        menu.addItem(menuItem("menu.fetch", action: #selector(fetchDescriptions)))
+        hudMenuItem = menuItem("settings.hud", action: #selector(toggleHUD))
+        hudMenuItem.state = preferences.hudEnabled ? .on : .off
+        menu.addItem(hudMenuItem)
+        menu.addItem(.separator())
+        menu.addItem(menuItem("settings.open", action: #selector(openSettings), key: ","))
+        menu.addItem(.separator())
+        menu.addItem(menuItem("menu.quit", action: #selector(quit), key: "q"))
         statusItem.menu = menu
+    }
+
+    private func menuItem(_ key: String, action: Selector, key equivalent: String = "") -> NSMenuItem {
+        let item = NSMenuItem(title: preferences.text(key), action: action, keyEquivalent: equivalent)
+        item.target = self
+        return item
+    }
+
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
+        switch menuItem.action {
+        case #selector(rescan): return !library.isScanning
+        case #selector(fetchDescriptions):
+            return !library.isScanning && !library.apps.isEmpty && !FetchProgress.shared.isRunning
+        default: return true
+        }
+    }
+
+    // AppKit's responder chain gives the note editor standard copy/paste and undo shortcuts.
+    private func setupApplicationMenu() {
+        let mainMenu = NSMenu()
+        let appMenu = NSMenu(title: "AppNotes")
+        appMenu.addItem(menuItem("settings.open", action: #selector(openSettings), key: ","))
+        appMenu.addItem(.separator())
+        let hide = NSMenuItem(title: preferences.text("menu.hide"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(hide)
+        appMenu.addItem(menuItem("menu.quit", action: #selector(quit), key: "q"))
+        let appItem = NSMenuItem(title: "AppNotes", action: nil, keyEquivalent: "")
+        appItem.submenu = appMenu
+        mainMenu.addItem(appItem)
+
+        let editMenu = NSMenu(title: preferences.text("menu.edit"))
+        let editActions: [(String, String, String)] = [
+            ("menu.undo", "undo:", "z"), ("menu.redo", "redo:", "Z"),
+            ("menu.cut", "cut:", "x"), ("menu.copy", "copy:", "c"),
+            ("menu.paste", "paste:", "v"), ("menu.selectAll", "selectAll:", "a")
+        ]
+        for (index, entry) in editActions.enumerated() {
+            if index == 2 { editMenu.addItem(.separator()) }
+            editMenu.addItem(NSMenuItem(title: preferences.text(entry.0),
+                                        action: NSSelectorFromString(entry.1), keyEquivalent: entry.2))
+        }
+        let editItem = NSMenuItem(title: editMenu.title, action: nil, keyEquivalent: "")
+        editItem.submenu = editMenu
+        mainMenu.addItem(editItem)
+        let windowMenu = NSMenu(title: preferences.text("menu.window"))
+        windowMenu.addItem(NSMenuItem(title: preferences.text("menu.close"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w"))
+        windowMenu.addItem(NSMenuItem(title: preferences.text("menu.minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m"))
+        let windowItem = NSMenuItem(title: windowMenu.title, action: nil, keyEquivalent: "")
+        windowItem.submenu = windowMenu
+        mainMenu.addItem(windowItem)
+        NSApp.mainMenu = mainMenu
+    }
+
+    @objc private func preferencesChanged() {
+        NSApp.appearance = preferences.appearance.nativeAppearance
+        // Explicitly update existing panels as well as future windows.
+        for window in [managerWindow, settingsWindow, searchPanel, hudPanel].compactMap({ $0 }) {
+            window.appearance = preferences.appearance.nativeAppearance
+        }
+        managerWindow?.title = preferences.text("app.title")
+        settingsWindow?.title = preferences.text("settings.title")
+        setupStatusItem()
+        setupApplicationMenu()
+        if !preferences.hudEnabled {
+            hudTimer?.invalidate()
+            hudPanel?.orderOut(nil)
+            hudPanel = nil
+        }
+        preferences.objectWillChange.send()
     }
 
     private func setupKeyMonitor() {
@@ -73,41 +148,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
     }
 
-    private func refreshApps() {
-        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
-            let scanned = AppScanner.scan()
-            DispatchQueue.main.async { self?.cachedApps = scanned }
-        }
-    }
-
     // MARK: - Actions
 
     @objc private func rescan() {
-        refreshApps()
+        library.refresh()
     }
 
     @objc private func fetchDescriptions() {
-        let apps = cachedApps
+        let apps = library.apps
         Task { await DescriptionFetcher.shared.fetchAll(apps: apps, progress: FetchProgress.shared) }
     }
 
     @objc private func openManager() {
         if managerWindow == nil {
             let window = NSWindow(
-                contentRect: NSRect(x: 0, y: 0, width: 980, height: 640),
+                contentRect: NSRect(x: 0, y: 0, width: 1080, height: 700),
                 styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                 backing: .buffered,
                 defer: false
             )
-            window.title = "应用备注"
+            window.title = preferences.text("app.title")
             window.titleVisibility = .visible
-            window.contentViewController = NSHostingController(rootView: ManagerView())
+            window.titlebarAppearsTransparent = true
+            window.toolbarStyle = .unified
+            window.appearance = preferences.appearance.nativeAppearance
+            window.contentViewController = NSHostingController(rootView: AppRoot {
+                ManagerView(onSettings: { [weak self] in self?.openSettings() },
+                            onSearch: { [weak self] in self?.showSearch() })
+            })
+            window.setContentSize(NSSize(width: 1080, height: 700))
+            window.setFrameAutosaveName("AppNotes.manager")
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.center()
             managerWindow = window
         }
         managerWindow?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func openSettings() {
+        if settingsWindow == nil {
+            let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 520, height: 620),
+                                  styleMask: [.titled, .closable], backing: .buffered, defer: false)
+            window.title = preferences.text("settings.title")
+            window.titlebarAppearsTransparent = true
+            window.appearance = preferences.appearance.nativeAppearance
+            window.contentViewController = NSHostingController(rootView: AppRoot { SettingsView() })
+            window.isReleasedWhenClosed = false
+            window.delegate = self
+            window.center()
+            settingsWindow = window
+        }
+        settingsWindow?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 
@@ -122,11 +215,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return
         }
 
-        let apps = cachedApps.isEmpty ? AppScanner.scan() : cachedApps
         let panel = FloatingPanel()
-        let root = SearchOverlayView(apps: apps) { [weak self] in
-            self?.searchPanel?.close()
-            self?.searchPanel = nil
+        panel.appearance = preferences.appearance.nativeAppearance
+        let root = AppRoot {
+            SearchOverlayView { [weak self] in
+                self?.searchPanel?.close()
+                self?.searchPanel = nil
+            }
         }
         let hosting = NSHostingView(rootView: root)
         hosting.frame = NSRect(origin: .zero, size: hosting.fittingSize)
@@ -148,8 +243,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func toggleHUD() {
-        hudEnabled.toggle()
-        hudMenuItem.state = hudEnabled ? .on : .off
+        preferences.hudEnabled.toggle()
     }
 
     @objc private func quit() {
@@ -201,7 +295,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     }
 
     @objc private func appDidActivate(_ notification: Notification) {
-        guard hudEnabled else { return }
+        guard preferences.hudEnabled else { return }
         guard let app = notification.userInfo?[NSWorkspace.applicationUserInfoKey] as? NSRunningApplication else { return }
         guard app.bundleIdentifier != Bundle.main.bundleIdentifier else { return }
 
@@ -210,25 +304,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
             note = NotesStore.shared.note(for: path)
         }
         if note.isEmpty, let bundleID = app.bundleIdentifier,
-           let match = cachedApps.first(where: { $0.bundleID == bundleID }) {
+           let match = library.apps.first(where: { $0.bundleID == bundleID }) {
             note = NotesStore.shared.note(for: match.path)
         }
         guard !note.isEmpty else { return }
 
         let name = app.localizedName ?? (app.bundleURL?.lastPathComponent as NSString?)?.deletingPathExtension ?? ""
-        showHUD(appName: name, note: note)
+        showHUD(appName: name, note: note, appPath: app.bundleURL?.path)
     }
 
-    private func showHUD(appName: String, note: String) {
+    private func showHUD(appName: String, note: String, appPath: String?) {
         hudTimer?.invalidate()
         hudPanel?.orderOut(nil)
 
-        let hosting = NSHostingView(rootView: HUDView(appName: appName, note: note))
+        let hosting = NSHostingView(rootView: AppRoot { HUDView(appName: appName, note: note, appPath: appPath) })
         let size = hosting.fittingSize
         hosting.frame = NSRect(origin: .zero, size: size)
 
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         panel.contentView = hosting
+        panel.appearance = preferences.appearance.nativeAppearance
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear
@@ -236,7 +331,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
 
-        let screen = NSScreen.main ?? NSScreen.screens.first!
+        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
         let sf = screen.visibleFrame
         panel.setFrameOrigin(NSPoint(x: sf.midX - size.width / 2, y: sf.maxY - size.height - 28))
         panel.orderFrontRegardless()
@@ -245,7 +340,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         hudTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
             DispatchQueue.main.async {
                 NSAnimationContext.runAnimationGroup { context in
-                    context.duration = 0.35
+                    context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.35
                     self?.hudPanel?.animator().alphaValue = 0
                 } completionHandler: {
                     self?.hudPanel?.orderOut(nil)
@@ -263,6 +358,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
         }
         if let window = notification.object as? NSWindow, window === searchPanel {
             searchPanel = nil
+        }
+        if let window = notification.object as? NSWindow, window === settingsWindow {
+            settingsWindow = nil
         }
     }
 

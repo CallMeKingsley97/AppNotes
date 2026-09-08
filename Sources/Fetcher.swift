@@ -25,10 +25,11 @@ final class SuggestionStore: ObservableObject {
         var ignored: [String] = []
     }
 
-    init() {
-        let base = (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/AppNotes")
-        try? FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
-        storeURL = URL(fileURLWithPath: (base as NSString).appendingPathComponent("suggestions.json"))
+    init(directory: URL? = nil) {
+        let base = directory ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AppNotes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        storeURL = base.appendingPathComponent("suggestions.json")
         load()
     }
 
@@ -118,14 +119,17 @@ final class DescriptionFetcher {
     // MARK: 主流程
 
     func fetchAll(apps: [AppEntry], progress: FetchProgress) async {
-        await update(progress) {
-            $0.isRunning = true
-            $0.current = 0
-            $0.total = apps.count
-            $0.found = 0
-            $0.currentName = ""
-            $0.cancelRequested = false
+        let canStart = await MainActor.run {
+            guard !progress.isRunning, !apps.isEmpty else { return false }
+            progress.isRunning = true
+            progress.current = 0
+            progress.total = apps.count
+            progress.found = 0
+            progress.currentName = ""
+            progress.cancelRequested = false
+            return true
         }
+        guard canStart else { return }
 
         let brewMap = await brewDescriptions()
 

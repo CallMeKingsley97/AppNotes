@@ -27,27 +27,43 @@ enum AppCategory: String, CaseIterable, Identifiable {
         return app.appStoreID != nil ? .appStore : .downloaded
     }
 
-    var title: String {
-        switch self {
-        case .system: return "系统自带"
-        case .appStore: return "App Store 下载"
-        case .downloaded: return "网络下载"
-        }
-    }
-
-    var tabTitle: String {
-        switch self {
-        case .system: return "系统"
-        case .appStore: return "商店"
-        case .downloaded: return "网络"
-        }
-    }
+    var titleKey: String { "category.\(rawValue)" }
 
     var symbolName: String {
         switch self {
-        case .system: return "gearshape.fill"
-        case .appStore: return "cart.fill"
-        case .downloaded: return "network"
+        case .system: return "apple.logo"
+        case .appStore: return "bag"
+        case .downloaded: return "arrow.down.circle"
+        }
+    }
+}
+
+// A shared scan keeps the manager, menu actions, and quick search in sync.
+final class AppLibrary: ObservableObject {
+    static let shared = AppLibrary()
+    @Published private(set) var apps: [AppEntry] = []
+    @Published private(set) var isScanning = false
+    private var hasScanned = false
+
+    init(apps: [AppEntry]? = nil) {
+        self.apps = apps ?? []
+        hasScanned = apps != nil
+    }
+
+    func scanIfNeeded() {
+        if !hasScanned { refresh() }
+    }
+
+    func refresh() {
+        guard !isScanning else { return }
+        isScanning = true
+        DispatchQueue.global(qos: .userInitiated).async {
+            let scanned = AppScanner.scan()
+            DispatchQueue.main.async {
+                self.apps = scanned
+                self.isScanning = false
+                self.hasScanned = true
+            }
         }
     }
 }
@@ -85,7 +101,7 @@ enum AppScanner {
                 // CFBundleDisplayName 经常被写成空串 "" 而不是不写，
                 // ?? 不会跳过空串，所以要把空串也当没找到处理
                 let name = (bundleName?.isEmpty == false ? bundleName : nil)
-                    ?? (fileName.isEmpty ? "未知应用" : fileName)
+                    ?? (fileName.isEmpty ? "App" : fileName)
                 let storeMetadata = appStoreMetadata(at: path)
 
                 result.append(
@@ -149,10 +165,11 @@ final class NotesStore: ObservableObject {
     private let storeURL: URL
     private var saveWorkItem: DispatchWorkItem?
 
-    init() {
-        let base = (NSHomeDirectory() as NSString).appendingPathComponent("Library/Application Support/AppNotes")
-        try? FileManager.default.createDirectory(atPath: base, withIntermediateDirectories: true)
-        self.storeURL = URL(fileURLWithPath: (base as NSString).appendingPathComponent("notes.json"))
+    init(directory: URL? = nil) {
+        let base = directory ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AppNotes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        self.storeURL = base.appendingPathComponent("notes.json")
         load()
     }
 
