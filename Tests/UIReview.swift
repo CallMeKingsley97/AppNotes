@@ -58,6 +58,7 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
             ["manager", "settings", "search", "hud", "suggestion"].map { ($0, AppearanceState()) })
         let notes = NotesStore(directory: dataDirectory)
         let suggestions = SuggestionStore(directory: dataDirectory)
+        let detailsStore = AppDetailsStore(directory: dataDirectory, loader: FixtureDetailsLoader())
         let apps = [
             AppEntry(path: "/System/Applications/Notes.app", name: "Notes", bundleID: "com.apple.Notes",
                      version: "4.12", appStoreID: nil, storefrontCountryCode: nil),
@@ -76,7 +77,8 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         suggestions.flush()
         let windows: [(String, NSWindow)] = [
             ("manager", window(AppRoot(preferences: preferences) {
-                ManagerView(store: notes, suggestionStore: suggestions, library: library, onSettings: {}, onSearch: {})
+                ManagerView(store: notes, suggestionStore: suggestions, library: library, detailsStore: detailsStore,
+                            onSettings: {}, onSearch: {})
                     .background(AppearanceProbe(state: appearanceStates["manager"]!))
             }, size: NSSize(width: 1080, height: 700))),
             ("settings", window(AppRoot(preferences: preferences) {
@@ -91,7 +93,7 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                     .background(AppearanceProbe(state: appearanceStates["hud"]!))
             }, size: NSSize(width: 390, height: 120), useHostingView: true)),
             ("suggestion", window(AppRoot(preferences: preferences) {
-                DetailView(app: apps[1], store: notes, suggestionStore: suggestions)
+                DetailView(app: apps[1], store: notes, suggestionStore: suggestions, detailsStore: detailsStore)
                     .background(AppearanceProbe(state: appearanceStates["suggestion"]!))
             }, size: NSSize(width: 430, height: 780)))
         ]
@@ -113,6 +115,40 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                     let path = output.appendingPathComponent("\(name)-\(language.rawValue)-\(appearance.rawValue).png")
                     try bitmap.representation(using: .png, properties: [:])!.write(to: path)
                     window.orderOut(nil)
+                }
+                let fixture = try DetailsFixtures.details(language: language.resolvedIdentifier())
+                let cardWindows: [(String, NSWindow)] = [
+                    ("information", window(AppRoot(preferences: preferences) {
+                        AppInformationCard(app: DetailsFixtures.app, details: fixture,
+                                           local: LocalAppDetails(copyright: "© 2026 Example Studio"))
+                            .padding(24).frame(width: 430, height: 1100, alignment: .top)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                    }, size: NSSize(width: 430, height: 1100))),
+                    ("purchases", window(AppRoot(preferences: preferences) {
+                        InAppPurchasesCard(details: fixture, loading: false)
+                            .padding(24).frame(width: 430, height: 430, alignment: .top)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                    }, size: NSSize(width: 430, height: 430))),
+                    ("unavailable", window(AppRoot(preferences: preferences) {
+                        VStack(spacing: 18) {
+                            AppIntroductionCard(details: nil, suggestion: nil, loading: false)
+                            AppInformationCard(app: apps[2], details: nil, local: LocalAppDetails())
+                            InAppPurchasesCard(details: nil, loading: false)
+                        }
+                        .padding(24).frame(width: 430, height: 760, alignment: .top)
+                        .background(Color(nsColor: .windowBackgroundColor))
+                    }, size: NSSize(width: 430, height: 760)))
+                ]
+                for (name, window) in cardWindows {
+                    window.makeKeyAndOrderFront(nil)
+                    try await Task.sleep(for: .milliseconds(200))
+                    let view = window.contentView!
+                    view.layoutSubtreeIfNeeded()
+                    let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                    view.cacheDisplay(in: view.bounds, to: bitmap)
+                    try bitmap.representation(using: .png, properties: [:])!.write(
+                        to: output.appendingPathComponent("\(name)-\(language.rawValue)-\(appearance.rawValue).png"))
+                    window.close()
                 }
                 precondition(notes.note(for: apps[0].path) == originalNote)
                 precondition(NotesStore(directory: dataDirectory).note(for: apps[0].path) == originalNote)
@@ -149,7 +185,7 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                                    states: ["settings": reopenedState], transition: "system-reopened", output: output)
         precondition(notes.note(for: apps[0].path) == originalNote)
         precondition(NotesStore(directory: dataDirectory).note(for: apps[0].path) == originalNote)
-        print("Passed: \(languages.count * 10) bilingual renders; 36 native/SwiftUI appearance checks covering manual → system, inherited changes, and reopened settings; persisted notes unchanged.")
+        print("Passed: \(languages.count * 16) bilingual renders including information, purchases, and unavailable states; 36 native/SwiftUI appearance checks covering manual → system, inherited changes, and reopened settings; persisted notes unchanged.")
         print("Review images: \(output.path)")
     }
 

@@ -32,6 +32,7 @@ struct ManagerView: View {
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var suggestionStore = SuggestionStore.shared
     @ObservedObject var library = AppLibrary.shared
+    @ObservedObject var detailsStore = AppDetailsStore.shared
     @State private var query = ""
     @State private var selection: String?
     @State private var filter: LibraryFilter? = .all
@@ -58,7 +59,7 @@ struct ManagerView: View {
         } detail: {
             Group {
                 if let app = selectedApp {
-                    DetailView(app: app, store: store, suggestionStore: suggestionStore)
+                    DetailView(app: app, store: store, suggestionStore: suggestionStore, detailsStore: detailsStore)
                         .id(app.id)
                 } else {
                     EmptyState(symbol: "note.text", title: preferences.text("detail.empty"),
@@ -274,7 +275,7 @@ struct ManagerBottomBar: View {
     }
 }
 
-struct DetailView: View {
+struct NoteEditorView: View {
     @EnvironmentObject private var preferences: AppPreferences
     let app: AppEntry
     @ObservedObject var store = NotesStore.shared
@@ -287,44 +288,15 @@ struct DetailView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                header
-                Divider()
+            VStack(alignment: .leading, spacing: 20) {
                 editor
                 if note.isEmpty, let suggestion = suggestionStore.suggestion(for: app.path) {
                     suggestionCard(suggestion)
                 }
-                appInformation
             }
             .padding(28)
             .frame(maxWidth: 780, alignment: .leading)
             .frame(maxWidth: .infinity)
-        }
-        .background(Color(nsColor: .textBackgroundColor))
-    }
-
-    private var header: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            HStack(spacing: 16) {
-                AppIcon(app: app, size: 64)
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(app.name).font(.system(size: 25, weight: .semibold)).textSelection(.enabled)
-                    Label(preferences.text(AppCategory.of(app).titleKey), systemImage: AppCategory.of(app).symbolName)
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-                Spacer(minLength: 0)
-            }
-            HStack(spacing: 10) {
-                Button(action: app.open) {
-                    Label(preferences.text("detail.open"), systemImage: "arrow.up.forward")
-                }
-                .buttonStyle(.borderedProminent)
-                Button(action: app.reveal) {
-                    Label(preferences.text("detail.reveal"), systemImage: "folder")
-                }
-                .buttonStyle(.bordered)
-            }
-            .controlSize(.regular)
         }
     }
 
@@ -391,27 +363,6 @@ struct DetailView: View {
         }
     }
 
-    private var appInformation: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            Text(preferences.text("detail.info")).font(.headline)
-            Grid(alignment: .leading, horizontalSpacing: 20, verticalSpacing: 12) {
-                if let version = app.version { informationRow("detail.version", value: version) }
-                if let bundleID = app.bundleID { informationRow("detail.bundle", value: bundleID) }
-                informationRow("detail.location", value: app.path)
-            }
-            .font(.callout)
-        }
-        .padding(.bottom, 8)
-    }
-
-    private func informationRow(_ key: String, value: String) -> some View {
-        GridRow(alignment: .top) {
-            Text(preferences.text(key)).foregroundStyle(.secondary).fixedSize()
-            Text(value).textSelection(.enabled).foregroundStyle(.secondary)
-                .lineLimit(2).truncationMode(.middle).help(value)
-                .frame(maxWidth: .infinity, alignment: .leading)
-        }
-    }
 }
 
 struct SidebarRow: View {

@@ -1,7 +1,7 @@
 import Foundation
 import AppKit
 
-struct AppEntry: Identifiable, Hashable {
+struct AppEntry: Identifiable, Hashable, Sendable {
     let path: String
     let name: String
     let bundleID: String?
@@ -21,10 +21,11 @@ enum AppCategory: String, CaseIterable, Identifiable {
     var id: Self { self }
 
     static func of(_ app: AppEntry) -> AppCategory {
-        if app.path.hasPrefix("/System/") || app.bundleID?.hasPrefix("com.apple.") == true {
+        if app.path.hasPrefix("/System/") {
             return .system
         }
-        return app.appStoreID != nil ? .appStore : .downloaded
+        if app.appStoreID != nil { return .appStore }
+        return app.bundleID?.hasPrefix("com.apple.") == true ? .system : .downloaded
     }
 
     var titleKey: String { "category.\(rawValue)" }

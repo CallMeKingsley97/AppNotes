@@ -38,6 +38,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     func applicationWillTerminate(_ notification: Notification) {
         NotesStore.shared.flush()
         SuggestionStore.shared.flush()
+        AppDetailsStore.shared.flush()
     }
 
     // MARK: - Menu bar
