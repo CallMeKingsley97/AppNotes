@@ -8,6 +8,22 @@ private final class ReviewDefaults: UserDefaults, @unchecked Sendable {
     override func set(_ value: Any?, forKey key: String) { values[key] = value }
 }
 
+private final class AppearanceState {
+    var colorScheme: ColorScheme?
+}
+
+private struct AppearanceProbe: NSViewRepresentable {
+    @Environment(\.colorScheme) private var colorScheme
+    let state: AppearanceState
+
+    func makeNSView(context: Context) -> NSView { NSView() }
+    func updateNSView(_ nsView: NSView, context: Context) { state.colorScheme = colorScheme }
+}
+
+private struct AppearanceFailure: Error, CustomStringConvertible {
+    let description: String
+}
+
 @main
 struct UIReview {
     static func main() {
@@ -38,6 +54,8 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         let dataDirectory = output.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         let preferences = AppPreferences(defaults: ReviewDefaults(suiteName: "AppNotes.UIReview")!)
+        let appearanceStates = Dictionary(uniqueKeysWithValues:
+            ["manager", "settings", "search", "hud", "suggestion"].map { ($0, AppearanceState()) })
         let notes = NotesStore(directory: dataDirectory)
         let suggestions = SuggestionStore(directory: dataDirectory)
         let apps = [
@@ -59,27 +77,33 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         let windows: [(String, NSWindow)] = [
             ("manager", window(AppRoot(preferences: preferences) {
                 ManagerView(store: notes, suggestionStore: suggestions, library: library, onSettings: {}, onSearch: {})
+                    .background(AppearanceProbe(state: appearanceStates["manager"]!))
             }, size: NSSize(width: 1080, height: 700))),
-            ("settings", window(AppRoot(preferences: preferences) { SettingsView() }, size: NSSize(width: 520, height: 620))),
+            ("settings", window(AppRoot(preferences: preferences) {
+                SettingsView().background(AppearanceProbe(state: appearanceStates["settings"]!))
+            }, size: NSSize(width: 520, height: 620))),
             ("search", window(AppRoot(preferences: preferences) {
                 SearchOverlayView(store: notes, library: library, onClose: {})
-            }, size: NSSize(width: 580, height: 430))),
+                    .background(AppearanceProbe(state: appearanceStates["search"]!))
+            }, size: NSSize(width: 580, height: 430), useHostingView: true)),
             ("hud", window(AppRoot(preferences: preferences) {
                 HUDView(appName: "Notes", note: originalNote, appPath: apps[0].path)
-            }, size: NSSize(width: 390, height: 120))),
+                    .background(AppearanceProbe(state: appearanceStates["hud"]!))
+            }, size: NSSize(width: 390, height: 120), useHostingView: true)),
             ("suggestion", window(AppRoot(preferences: preferences) {
                 DetailView(app: apps[1], store: notes, suggestionStore: suggestions)
+                    .background(AppearanceProbe(state: appearanceStates["suggestion"]!))
             }, size: NSSize(width: 430, height: 780)))
         ]
         // Reuse these windows through every switch to exercise live observation, not just initial rendering.
         NSApp.activate(ignoringOtherApps: true)
-        for language in [AppLanguage.chinese, .english] {
+        let languages: [AppLanguage] = CommandLine.arguments.contains("--appearance-only") ? [] : [.chinese, .english]
+        for language in languages {
             preferences.language = language
             for appearance in [AppAppearance.light, .dark] {
                 preferences.appearance = appearance
                 NSApp.appearance = appearance.nativeAppearance
                 for (name, window) in windows {
-                    window.appearance = appearance.nativeAppearance
                     window.makeKeyAndOrderFront(nil)
                     try await Task.sleep(nanoseconds: 200_000_000)
                     let view = window.contentView!
@@ -94,19 +118,74 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                 precondition(NotesStore(directory: dataDirectory).note(for: apps[0].path) == originalNote)
             }
         }
-        // Existing windows must also return to the system appearance.
+        // Match production: NSApp owns the override; every window and hosting view inherits it.
         preferences.appearance = .system
-        NSApp.appearance = preferences.appearance.nativeAppearance
-        for (_, window) in windows { window.appearance = nil }
-        precondition(preferences.appearance.nativeAppearance == nil)
-        print("Passed: 20 native view renders, live language/theme switches, system appearance reset, and unchanged persisted notes.")
+        NSApp.appearance = nil
+        let systemAppearance = NSApp.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])!
+        for manual in [AppAppearance.dark, .light] {
+            preferences.appearance = manual
+            NSApp.appearance = manual.nativeAppearance
+            try await verifyAppearance(manual.nativeAppearance!.name, windows: windows, states: appearanceStates,
+                                       transition: manual.rawValue, output: output)
+            preferences.appearance = .system
+            NSApp.appearance = nil
+            try await verifyAppearance(systemAppearance, windows: windows, states: appearanceStates,
+                                       transition: "system-after-\(manual.rawValue)", output: output)
+        }
+        // Emulate inherited appearance changes inside this test process without changing macOS settings.
+        for inherited in [NSAppearance.Name.darkAqua, .aqua] {
+            NSApp.appearance = NSAppearance(named: inherited)
+            try await verifyAppearance(inherited, windows: windows, states: appearanceStates,
+                                       transition: "system-inherited-\(inherited.rawValue)", output: output)
+        }
+        NSApp.appearance = nil
+        try await verifyAppearance(systemAppearance, windows: windows, states: appearanceStates,
+                                   transition: "system-restored", output: output)
+        let reopenedState = AppearanceState()
+        let reopenedWindow = window(AppRoot(preferences: preferences) {
+            SettingsView().background(AppearanceProbe(state: reopenedState))
+        }, size: NSSize(width: 520, height: 620))
+        try await verifyAppearance(systemAppearance, windows: [("settings", reopenedWindow)],
+                                   states: ["settings": reopenedState], transition: "system-reopened", output: output)
+        precondition(notes.note(for: apps[0].path) == originalNote)
+        precondition(NotesStore(directory: dataDirectory).note(for: apps[0].path) == originalNote)
+        print("Passed: \(languages.count * 10) bilingual renders; 36 native/SwiftUI appearance checks covering manual → system, inherited changes, and reopened settings; persisted notes unchanged.")
         print("Review images: \(output.path)")
     }
 
-    @MainActor private func window<Content: View>(_ content: Content, size: NSSize) -> NSWindow {
+    @MainActor private func verifyAppearance(_ expected: NSAppearance.Name, windows: [(String, NSWindow)],
+                                             states: [String: AppearanceState], transition: String, output: URL) async throws {
+        let expectedScheme: ColorScheme = expected == .darkAqua ? .dark : .light
+        for (name, window) in windows {
+            window.makeKeyAndOrderFront(nil)
+            try await Task.sleep(nanoseconds: 200_000_000)
+            let view = window.contentView!
+            let windowAppearance = window.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            let contentAppearance = view.effectiveAppearance.bestMatch(from: [.aqua, .darkAqua])
+            let scheme = states[name]!.colorScheme
+            if name == "settings" {
+                view.layoutSubtreeIfNeeded()
+                let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds)!
+                view.cacheDisplay(in: view.bounds, to: bitmap)
+                try bitmap.representation(using: .png, properties: [:])!.write(
+                    to: output.appendingPathComponent("settings-\(transition).png"))
+            }
+            guard window.appearance == nil, view.appearance == nil,
+                  windowAppearance == expected, contentAppearance == expected, scheme == expectedScheme else {
+                throw AppearanceFailure(description: "\(transition), \(name): expected=\(expected.rawValue), window=\(windowAppearance?.rawValue ?? "nil"), content=\(contentAppearance?.rawValue ?? "nil"), SwiftUI=\(String(describing: scheme))")
+            }
+            window.orderOut(nil)
+        }
+    }
+
+    @MainActor private func window<Content: View>(_ content: Content, size: NSSize, useHostingView: Bool = false) -> NSWindow {
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                               styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        window.contentViewController = NSHostingController(rootView: content)
+        if useHostingView {
+            window.contentView = NSHostingView(rootView: content)
+        } else {
+            window.contentViewController = NSHostingController(rootView: content)
+        }
         window.setContentSize(size)
         window.isReleasedWhenClosed = false
         window.center()

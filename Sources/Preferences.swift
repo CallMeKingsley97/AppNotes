@@ -12,13 +12,6 @@ enum AppAppearance: String, CaseIterable, Identifiable {
         case .dark: return "moon"
         }
     }
-    var colorScheme: ColorScheme? {
-        switch self {
-        case .system: return nil
-        case .light: return .light
-        case .dark: return .dark
-        }
-    }
     var nativeAppearance: NSAppearance? {
         switch self {
         case .system: return nil
@@ -92,7 +85,8 @@ struct AppRoot<Content: View>: View {
         content()
             .environmentObject(preferences)
             .environment(\.locale, preferences.locale)
-            .preferredColorScheme(preferences.appearance.colorScheme)
+            // Inherit NSApp.appearance through the hosting view. A second SwiftUI
+            // override can retain the previous scheme when switching back to System.
             .tint(.accentColor)
     }
 }

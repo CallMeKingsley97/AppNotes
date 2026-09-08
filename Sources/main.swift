@@ -122,10 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     @objc private func preferencesChanged() {
         NSApp.appearance = preferences.appearance.nativeAppearance
-        // Explicitly update existing panels as well as future windows.
-        for window in [managerWindow, settingsWindow, searchPanel, hudPanel].compactMap({ $0 }) {
-            window.appearance = preferences.appearance.nativeAppearance
-        }
+        // Windows and hosting views inherit the app appearance, including live system changes.
         managerWindow?.title = preferences.text("app.title")
         settingsWindow?.title = preferences.text("settings.title")
         setupStatusItem()
@@ -171,7 +168,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
             window.titleVisibility = .visible
             window.titlebarAppearsTransparent = true
             window.toolbarStyle = .unified
-            window.appearance = preferences.appearance.nativeAppearance
             window.contentViewController = NSHostingController(rootView: AppRoot {
                 ManagerView(onSettings: { [weak self] in self?.openSettings() },
                             onSearch: { [weak self] in self?.showSearch() })
@@ -193,7 +189,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = preferences.text("settings.title")
             window.titlebarAppearsTransparent = true
-            window.appearance = preferences.appearance.nativeAppearance
             window.contentViewController = NSHostingController(rootView: AppRoot { SettingsView() })
             window.isReleasedWhenClosed = false
             window.delegate = self
@@ -216,7 +211,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         let panel = FloatingPanel()
-        panel.appearance = preferences.appearance.nativeAppearance
         let root = AppRoot {
             SearchOverlayView { [weak self] in
                 self?.searchPanel?.close()
@@ -323,7 +317,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
         let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
         panel.contentView = hosting
-        panel.appearance = preferences.appearance.nativeAppearance
         panel.level = .floating
         panel.isOpaque = false
         panel.backgroundColor = .clear

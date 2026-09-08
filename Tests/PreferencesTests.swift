@@ -23,7 +23,6 @@ struct PreferencesTests {
         precondition(AppLanguage.system.resolvedIdentifier(preferredLanguages: ["fr"]) == "en")
         precondition(AppLanguage.chinese.resolvedIdentifier(preferredLanguages: ["en"]) == "zh-Hans")
         precondition(AppAppearance.system.nativeAppearance == nil)
-        precondition(AppAppearance.system.colorScheme == nil)
         precondition(AppAppearance.light.nativeAppearance?.name == .aqua)
         precondition(AppAppearance.dark.nativeAppearance?.name == .darkAqua)
 

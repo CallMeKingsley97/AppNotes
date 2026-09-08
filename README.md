@@ -25,3 +25,5 @@ Build/UIReview.app/Contents/MacOS/UIReview
 ```
 
 该程序在临时目录创建独立的测试数据，使用相同窗口依次切换两种语言和两种外观，输出到系统临时目录的 `appnotes-ui-review` 文件夹，并检查测试备注的保存内容。需要在 macOS 图形会话中运行。
+
+添加 --appearance-only 参数可只检查外观回归：手动深浅色切回跟随系统、继承外观变化和重新打开设置窗口，并核对原生窗口与 SwiftUI 内容的实际外观是否一致。测试不会更改 macOS 的系统外观设置。
