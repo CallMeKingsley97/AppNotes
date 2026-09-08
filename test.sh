@@ -14,4 +14,9 @@ xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   Sources/Models.swift Sources/AppDetails.swift Tests/DetailsFixtures.swift Tests/AppDetailsTests.swift \
   -o Build/Tests/AppDetailsTests
 Build/Tests/AppDetailsTests
+xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
+  -module-cache-path Build/ModuleCache \
+  Sources/Models.swift Tests/CustomCategoryTests.swift \
+  -o Build/Tests/CustomCategoryTests
+Build/Tests/CustomCategoryTests
 plutil -lint Info.plist Resources/en.lproj/Localizable.strings Resources/zh-Hans.lproj/Localizable.strings

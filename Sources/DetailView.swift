@@ -8,6 +8,8 @@ struct DetailView: View {
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var suggestionStore = SuggestionStore.shared
     @ObservedObject var detailsStore = AppDetailsStore.shared
+    @ObservedObject var categoryStore = CustomCategoryStore.shared
+    var onCreateCategory: () -> Void = {}
     @State private var tab = "overview"
     @State private var local = LocalAppDetails()
 
@@ -76,6 +78,13 @@ struct DetailView: View {
                     }
                 }
                 Spacer(minLength: 0)
+                Menu {
+                    CategoryMembershipItems(app: app, store: categoryStore, onCreate: onCreateCategory)
+                } label: {
+                    Label(preferences.text("category.addTo"), systemImage: "folder.badge.plus").labelStyle(.iconOnly)
+                }
+                .menuStyle(.borderlessButton).fixedSize()
+                .help(preferences.text("category.addTo")).accessibilityLabel(preferences.text("category.addTo"))
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
@@ -95,6 +104,13 @@ struct DetailView: View {
                 }
             }
             .buttonStyle(.bordered).controlSize(.regular)
+            let categories = categoryStore.categories.filter { categoryStore.contains(app, in: $0) }
+            if !categories.isEmpty {
+                Label(categories.map(\.name).joined(separator: preferences.language.resolvedIdentifier() == "zh-Hans" ? "、" : ", "),
+                      systemImage: "folder")
+                    .font(.caption).foregroundStyle(.secondary)
+                    .lineLimit(2).help(categories.map(\.name).joined(separator: "\n"))
+            }
         }
         .padding(24)
     }

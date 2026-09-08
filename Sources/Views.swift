@@ -33,18 +33,27 @@ struct ManagerView: View {
     @ObservedObject var suggestionStore = SuggestionStore.shared
     @ObservedObject var library = AppLibrary.shared
     @ObservedObject var detailsStore = AppDetailsStore.shared
+    @ObservedObject var categoryStore = CustomCategoryStore.shared
     @State private var query = ""
     @State private var selection: String?
-    @State private var filter: LibraryFilter? = .all
+    @State private var filter: String? = LibraryFilter.all.rawValue
+    @State private var categoryEditor: CustomAppCategory?
+    @State private var showingNewCategory = false
+    @State private var newCategoryApp: AppEntry?
+    @State private var managingCategory: CustomAppCategory?
     let onSettings: () -> Void
     let onSearch: () -> Void
 
-    private var activeFilter: LibraryFilter { filter ?? .all }
+    private var activeFilter: LibraryFilter? { LibraryFilter(rawValue: filter ?? "") }
+    private var activeCustomCategory: CustomAppCategory? {
+        guard let filter, filter.hasPrefix("custom:") else { return nil }
+        return categoryStore.categories.first { $0.id.uuidString == String(filter.dropFirst(7)) }
+    }
     private var filtered: [AppEntry] {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return library.apps.filter {
-            activeFilter.contains($0, store: store) &&
-                (term.isEmpty || $0.matches(term, note: store.note(for: $0.path)))
+        return library.apps.filter { app in
+            let belongs = activeFilter?.contains(app, store: store) ?? (activeCustomCategory.map { categoryStore.contains(app, in: $0) } ?? false)
+            return belongs && (term.isEmpty || app.matches(term, note: store.note(for: app.path)))
         }
     }
     private var selectedApp: AppEntry? { library.apps.first { $0.id == selection } }
@@ -59,7 +68,8 @@ struct ManagerView: View {
         } detail: {
             Group {
                 if let app = selectedApp {
-                    DetailView(app: app, store: store, suggestionStore: suggestionStore, detailsStore: detailsStore)
+                    DetailView(app: app, store: store, suggestionStore: suggestionStore, detailsStore: detailsStore,
+                               categoryStore: categoryStore, onCreateCategory: { beginNewCategory(including: app) })
                         .id(app.id)
                 } else {
                     EmptyState(symbol: "note.text", title: preferences.text("detail.empty"),
@@ -88,9 +98,35 @@ struct ManagerView: View {
             library.scanIfNeeded()
             reconcileSelection()
         }
-        .onChange(of: filter) { _, _ in selection = filtered.first?.id }
+        .onChange(of: filter) { _, _ in
+            query = ""
+            selection = filtered.first?.id
+        }
         .onChange(of: query) { _, _ in reconcileSelection() }
         .onChange(of: library.apps) { _, _ in reconcileSelection() }
+        .onChange(of: categoryStore.memberships) { _, _ in reconcileSelection() }
+        .onChange(of: categoryStore.categories) { _, _ in
+            if activeFilter == nil && activeCustomCategory == nil { filter = LibraryFilter.all.rawValue }
+            reconcileSelection()
+        }
+        .sheet(isPresented: $showingNewCategory) {
+            CategoryEditor(store: categoryStore, including: newCategoryApp) { category in
+                filter = "custom:\(category.id.uuidString)"
+            }
+        }
+        .sheet(item: $categoryEditor) { category in
+            CategoryEditor(store: categoryStore, category: category)
+        }
+        .sheet(item: $managingCategory) { category in
+            CategoryAppsEditor(store: categoryStore, library: library, category: category)
+        }
+        .alert(preferences.text("category.error"), isPresented: Binding(
+            get: { categoryStore.errorKey != nil && !showingNewCategory && categoryEditor == nil && managingCategory == nil },
+            set: { if !$0 { categoryStore.errorKey = nil } })) {
+            Button(preferences.text("info.ok"), role: .cancel) { categoryStore.errorKey = nil }
+        } message: {
+            Text(preferences.text(categoryStore.errorKey ?? "category.saveFailed"))
+        }
     }
 
     private var sidebar: some View {
@@ -104,6 +140,14 @@ struct ManagerView: View {
                     filterRow(.system)
                     filterRow(.appStore)
                     filterRow(.downloaded)
+                }
+                Section(preferences.text("category.title")) {
+                    ForEach(categoryStore.categories) { category in customCategoryRow(category) }
+                    Button { beginNewCategory() } label: {
+                        Label(preferences.text("category.new"), systemImage: "plus")
+                    }
+                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(.vertical, 4)
+                    .accessibilityIdentifier("category.new")
                 }
             }
             .listStyle(.sidebar)
@@ -144,7 +188,7 @@ struct ManagerView: View {
             Label {
                 Text(preferences.text(item.titleKey))
             } icon: {
-                if filter == item {
+                if filter == item.rawValue {
                     Image(systemName: item.symbol).foregroundStyle(.primary)
                 } else {
                     Image(systemName: item.symbol).foregroundStyle(Color.accentColor)
@@ -156,17 +200,55 @@ struct ManagerView: View {
         }
         .padding(.vertical, 3)
         .listItemTint(.accentColor)
-        .tag(item)
+        .tag(item.rawValue)
+    }
+
+    private func customCategoryRow(_ category: CustomAppCategory) -> some View {
+        let selected = filter == "custom:\(category.id.uuidString)"
+        return HStack {
+            Image(systemName: "folder").foregroundStyle(selected ? Color.primary : Color.accentColor)
+            Text(category.name).lineLimit(1)
+            Spacer(minLength: 4)
+            Text(categoryStore.apps(in: category, from: library.apps).count, format: .number)
+                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 3).tag("custom:\(category.id.uuidString)")
+        .help(category.name)
+        .contextMenu {
+            Button(preferences.text("category.manage")) { managingCategory = category }
+            Button(preferences.text("category.rename")) { categoryEditor = category }
+            Divider()
+            Button(preferences.text("category.delete"), role: .destructive) { categoryStore.delete(category) }
+                .help(preferences.text("category.deleteHelp"))
+        }
     }
 
     private var appList: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
-                    Text(preferences.text(activeFilter.titleKey)).font(.title3.weight(.semibold))
-                    Spacer()
+                    Text(activeCustomCategory?.name ?? preferences.text(activeFilter?.titleKey ?? "library.all"))
+                        .font(.title3.weight(.semibold)).lineLimit(2)
+                    Spacer(minLength: 6)
                     Text(preferences.text("library.count", filtered.count))
-                        .font(.caption).foregroundStyle(.secondary).monospacedDigit()
+                        .font(.caption).foregroundStyle(.secondary).monospacedDigit().fixedSize()
+                }
+                if let category = activeCustomCategory {
+                    HStack {
+                        Button { managingCategory = category } label: {
+                            Label(preferences.text("category.manage"), systemImage: "plus.circle")
+                        }
+                        .accessibilityIdentifier("category.manage")
+                        Spacer(minLength: 6)
+                        Menu {
+                            Button(preferences.text("category.rename")) { categoryEditor = category }
+                            Button(preferences.text("category.delete"), role: .destructive) { categoryStore.delete(category) }
+                        } label: {
+                            Label(preferences.text("info.more"), systemImage: "ellipsis").labelStyle(.iconOnly)
+                        }
+                        .menuStyle(.borderlessButton).fixedSize()
+                    }
+                    .buttonStyle(.borderless).font(.callout)
                 }
                 SearchField(text: $query, prompt: preferences.text("search.placeholder"))
             }
@@ -181,6 +263,15 @@ struct ManagerView: View {
                         .contextMenu {
                             Button(preferences.text("detail.open")) { app.open() }
                             Button(preferences.text("detail.reveal")) { app.reveal() }
+                            Divider()
+                            Menu(preferences.text("category.addTo")) {
+                                CategoryMembershipItems(app: app, store: categoryStore) { beginNewCategory(including: app) }
+                            }
+                            if let category = activeCustomCategory {
+                                Button(preferences.text("category.remove")) {
+                                    categoryStore.setMembership(app, in: category, included: false)
+                                }
+                            }
                         }
                 }
             }
@@ -208,9 +299,14 @@ struct ManagerView: View {
             } else if activeFilter == .noted {
                 EmptyState(symbol: "square.and.pencil", title: preferences.text("library.noNotes"),
                            message: preferences.text("library.noNotes.help"), compact: true)
-                Button(preferences.text("library.browse")) { filter = .all }
+                Button(preferences.text("library.browse")) { filter = LibraryFilter.all.rawValue }
+            } else if let category = activeCustomCategory {
+                EmptyState(symbol: "folder", title: preferences.text("category.empty"),
+                           message: preferences.text("category.emptyHelp"), compact: true)
+                Button(preferences.text("category.manage")) { managingCategory = category }
+                    .buttonStyle(.borderedProminent)
             } else {
-                EmptyState(symbol: activeFilter.symbol, title: preferences.text("library.empty"),
+                EmptyState(symbol: activeFilter?.symbol ?? "folder", title: preferences.text("library.empty"),
                            message: preferences.text("library.empty.help"), compact: true)
             }
         }
@@ -220,6 +316,11 @@ struct ManagerView: View {
     private func reconcileSelection() {
         if let selection, filtered.contains(where: { $0.id == selection }) { return }
         selection = filtered.first?.id
+    }
+
+    private func beginNewCategory(including app: AppEntry? = nil) {
+        newCategoryApp = app
+        showingNewCategory = true
     }
 }
 

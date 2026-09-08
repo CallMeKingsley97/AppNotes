@@ -69,6 +69,132 @@ final class AppLibrary: ObservableObject {
     }
 }
 
+struct CustomAppCategory: Identifiable, Codable, Hashable, Sendable {
+    let id: UUID
+    var name: String
+
+    init(id: UUID = UUID(), name: String) {
+        self.id = id
+        self.name = name
+    }
+}
+
+/// 用户自建的应用目录。成员使用应用路径保存，因此应用重新扫描后仍能保持归类。
+@MainActor
+final class CustomCategoryStore: ObservableObject {
+    static let shared = CustomCategoryStore()
+    @Published private(set) var categories: [CustomAppCategory] = []
+    @Published private(set) var memberships: [String: Set<UUID>] = [:]
+    @Published var errorKey: String?
+
+    private struct Storage: Codable {
+        var categories: [CustomAppCategory]
+        var memberships: [String: [UUID]]
+    }
+    private let storeURL: URL
+    private var loadFailed = false
+
+    init(directory: URL? = nil) {
+        let base = directory ?? FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/Application Support/AppNotes", isDirectory: true)
+        try? FileManager.default.createDirectory(at: base, withIntermediateDirectories: true)
+        storeURL = base.appendingPathComponent("custom-categories.json")
+        load()
+    }
+
+    func apps(in category: CustomAppCategory, from apps: [AppEntry]) -> [AppEntry] {
+        apps.filter { memberships[$0.path]?.contains(category.id) == true }
+    }
+
+    func contains(_ app: AppEntry, in category: CustomAppCategory) -> Bool {
+        memberships[app.path]?.contains(category.id) == true
+    }
+
+    func nameError(_ name: String, excluding id: UUID? = nil) -> String? {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if clean.isEmpty { return "category.nameRequired" }
+        if categories.contains(where: { $0.id != id && $0.name.caseInsensitiveCompare(clean) == .orderedSame }) {
+            return "category.nameDuplicate"
+        }
+        return nil
+    }
+
+    @discardableResult
+    func create(name: String, including app: AppEntry? = nil) -> CustomAppCategory? {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard nameError(clean) == nil else { return nil }
+        let category = CustomAppCategory(name: clean)
+        var updated = memberships
+        if let app { updated[app.path, default: []].insert(category.id) }
+        return save(categories: categories + [category], memberships: updated) ? category : nil
+    }
+
+    @discardableResult
+    func rename(_ category: CustomAppCategory, to name: String) -> Bool {
+        let clean = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard nameError(clean, excluding: category.id) == nil,
+              let index = categories.firstIndex(where: { $0.id == category.id }) else { return false }
+        var updated = categories
+        updated[index].name = clean
+        return save(categories: updated, memberships: memberships)
+    }
+
+    @discardableResult
+    func delete(_ category: CustomAppCategory) -> Bool {
+        save(categories: categories.filter { $0.id != category.id },
+             memberships: memberships.mapValues { $0.subtracting([category.id]) })
+    }
+
+    func toggle(_ app: AppEntry, in category: CustomAppCategory) {
+        setMembership(app, in: category, included: !contains(app, in: category))
+    }
+
+    func setMembership(_ app: AppEntry, in category: CustomAppCategory, included: Bool) {
+        _ = update(category, apps: [app], selectedPaths: included ? [app.path] : [])
+    }
+
+    /// Only edit the currently installed apps. Retain unavailable apps so reinstalling restores their membership.
+    @discardableResult
+    func update(_ category: CustomAppCategory, apps: [AppEntry], selectedPaths: Set<String>) -> Bool {
+        guard categories.contains(where: { $0.id == category.id }) else { return false }
+        var updated = memberships
+        for app in apps {
+            if selectedPaths.contains(app.path) { updated[app.path, default: []].insert(category.id) }
+            else { updated[app.path]?.remove(category.id) }
+        }
+        return save(categories: categories, memberships: updated)
+    }
+
+    private func load() {
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return }
+        do {
+            let storage = try JSONDecoder().decode(Storage.self, from: Data(contentsOf: storeURL))
+            categories = storage.categories
+            let validIDs = Set(categories.map(\.id))
+            memberships = storage.memberships.mapValues { Set($0).intersection(validIDs) }.filter { !$0.value.isEmpty }
+        } catch {
+            loadFailed = true
+            errorKey = "category.loadFailed"
+        }
+    }
+
+    private func save(categories: [CustomAppCategory], memberships: [String: Set<UUID>]) -> Bool {
+        guard !loadFailed else { errorKey = "category.loadFailed"; return false }
+        let cleaned = memberships.filter { !$0.value.isEmpty }
+        do {
+            let data = try JSONEncoder().encode(Storage(categories: categories, memberships: cleaned.mapValues(Array.init)))
+            try data.write(to: storeURL, options: .atomic)
+            self.categories = categories
+            self.memberships = cleaned
+            errorKey = nil
+            return true
+        } catch {
+            errorKey = "category.saveFailed"
+            return false
+        }
+    }
+}
+
 enum AppScanner {
     static func scan() -> [AppEntry] {
         let fm = FileManager.default
