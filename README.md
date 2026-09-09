@@ -72,9 +72,9 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
-## Community
+## 社区
 
-Shared on [LINUX DO](https://linux.do).
+已分享在 [LINUX DO](https://linux.do).
 
 ## 贡献
 
