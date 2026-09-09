@@ -72,6 +72,10 @@ git tag v1.0.0
 git push origin v1.0.0
 ```
 
+## Community
+
+Shared on [LINUX DO](https://linux.do).
+
 ## 贡献
 
 欢迎提交 Issue 和 Pull Request。提交前请运行：
