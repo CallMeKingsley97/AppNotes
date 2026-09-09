@@ -11,6 +11,48 @@ struct AppIcon: View {
     }
 }
 
+struct IconButtonChrome: ViewModifier {
+    var tint: Color = .accentColor
+    var isPressed = false
+    @State private var isHovering = false
+    @Environment(\.isEnabled) private var isEnabled
+
+    func body(content: Content) -> some View {
+        content
+            .labelStyle(.iconOnly)
+            .font(.system(size: 13, weight: .medium))
+            .foregroundStyle(isEnabled ? tint : Color(nsColor: .tertiaryLabelColor))
+            .frame(width: 28, height: 28)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(tint.opacity(isPressed ? 0.16 : isHovering ? 0.12 : 0.07))
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .strokeBorder(tint.opacity(isPressed ? 0.28 : isHovering ? 0.22 : 0.12), lineWidth: 1)
+            }
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .onHover { isHovering = $0 && isEnabled }
+            .animation(.easeOut(duration: 0.18), value: isHovering)
+            .animation(.easeOut(duration: 0.12), value: isPressed)
+    }
+}
+
+extension View {
+    func iconButtonChrome(tint: Color = .accentColor, isPressed: Bool = false) -> some View {
+        modifier(IconButtonChrome(tint: tint, isPressed: isPressed))
+    }
+}
+
+struct IconButtonStyle: ButtonStyle {
+    var tint: Color = .accentColor
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .iconButtonChrome(tint: tint, isPressed: configuration.isPressed)
+    }
+}
+
 struct EmptyState: View {
     let symbol: String
     let title: String

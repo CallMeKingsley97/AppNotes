@@ -19,6 +19,141 @@ struct CategoryMembershipItems: View {
     }
 }
 
+struct CategoryPickerButton: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    let app: AppEntry
+    @ObservedObject var store: CustomCategoryStore
+    let onCreate: () -> Void
+    @State private var isPresented = false
+
+    var body: some View {
+        Button {
+            isPresented.toggle()
+        } label: {
+            Label(preferences.text("category.addTo"), systemImage: "folder.badge.plus")
+        }
+        .buttonStyle(IconButtonStyle())
+        .help(preferences.text("category.addTo"))
+        .accessibilityLabel(preferences.text("category.addTo"))
+        .popover(isPresented: $isPresented, arrowEdge: .top) {
+            CategoryPickerPanel(app: app, store: store) {
+                isPresented = false
+                onCreate()
+            }
+        }
+    }
+}
+
+private struct CategoryPickerPanel: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    let app: AppEntry
+    @ObservedObject var store: CustomCategoryStore
+    let onCreate: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text(preferences.text("category.addTo"))
+                .font(.callout.weight(.semibold))
+                .foregroundStyle(.primary)
+
+            if store.categories.isEmpty {
+                Text(preferences.text("category.editorHelp"))
+                    .font(.caption).foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 5) {
+                    ForEach(store.categories) { category in
+                        CategoryPickerRow(
+                            app: app,
+                            category: category,
+                            isSelected: store.contains(app, in: category)
+                        ) {
+                            store.setMembership(
+                                app,
+                                in: category,
+                                included: !store.contains(app, in: category)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Divider()
+
+            Button(action: onCreate) {
+                HStack(spacing: 8) {
+                    Image(systemName: "plus.circle.fill")
+                    Text(preferences.text("category.new"))
+                        .font(.callout.weight(.medium))
+                    Spacer(minLength: 0)
+                }
+                .foregroundStyle(Color.accentColor)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
+                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+                .contentShape(RoundedRectangle(cornerRadius: 8))
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel(preferences.text("category.new"))
+        }
+        .padding(14)
+        .frame(width: 272)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
+        .overlay {
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
+                .allowsHitTesting(false)
+        }
+    }
+}
+
+private struct CategoryPickerRow: View {
+    let app: AppEntry
+    let category: CustomAppCategory
+    let isSelected: Bool
+    let action: () -> Void
+    @State private var isHovering = false
+
+    private var emblemTint: Color { isSelected ? .accentColor : .secondary }
+
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 9) {
+                Image(systemName: isSelected ? "folder.fill" : "folder")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(emblemTint)
+                    .frame(width: 22, height: 22)
+                    .background(emblemTint.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+
+                Text(category.name)
+                    .font(.callout.weight(isSelected ? .medium : .regular))
+                    .foregroundStyle(.primary)
+                    .lineLimit(1)
+
+                Spacer(minLength: 8)
+
+                Image(systemName: "checkmark")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(Color.accentColor)
+                    .opacity(isSelected ? 1 : 0)
+            }
+            .padding(.horizontal, 9)
+            .padding(.vertical, 7)
+            .background(
+                RoundedRectangle(cornerRadius: 8)
+                    .fill(isSelected ? Color.accentColor.opacity(isHovering ? 0.13 : 0.09)
+                                        : Color.primary.opacity(isHovering ? 0.05 : 0.02))
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovering = $0 }
+        .animation(.easeOut(duration: 0.16), value: isHovering)
+        .animation(.easeOut(duration: 0.16), value: isSelected)
+        .accessibilityLabel(category.name)
+        .accessibilityValue(isSelected ? "1" : "0")
+    }
+}
+
 struct CategoryEditor: View {
     @EnvironmentObject private var preferences: AppPreferences
     @Environment(\.dismiss) private var dismiss

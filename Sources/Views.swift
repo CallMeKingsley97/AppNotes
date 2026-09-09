@@ -51,10 +51,11 @@ struct ManagerView: View {
     }
     private var filtered: [AppEntry] {
         let term = query.trimmingCharacters(in: .whitespacesAndNewlines)
-        return library.apps.filter { app in
+        let matchingApps = library.apps.filter { app in
             let belongs = activeFilter?.contains(app, store: store) ?? (activeCustomCategory.map { categoryStore.contains(app, in: $0) } ?? false)
             return belongs && (term.isEmpty || app.matches(term, note: store.note(for: app.path)))
         }
+        return matchingApps.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
     private var selectedApp: AppEntry? { library.apps.first { $0.id == selection } }
 
@@ -362,6 +363,7 @@ struct ManagerBottomBar: View {
                         Label(preferences.text("library.scan"), systemImage: "arrow.clockwise")
                             .labelStyle(.iconOnly)
                     }
+                    .buttonStyle(IconButtonStyle())
                     .help(preferences.text("library.scan")).disabled(isScanning)
                 }
                 .buttonStyle(.borderless).font(.callout)

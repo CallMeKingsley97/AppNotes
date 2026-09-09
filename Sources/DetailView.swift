@@ -38,7 +38,8 @@ struct DetailView: View {
                         Label(preferences.text("info.refresh"), systemImage: "arrow.clockwise")
                             .labelStyle(.iconOnly)
                     }
-                    .buttonStyle(.borderless).help(preferences.text("info.refresh"))
+                    .buttonStyle(IconButtonStyle()).help(preferences.text("info.refresh"))
+                    .accessibilityLabel(preferences.text("info.refresh"))
                 }
             }
             .padding(.horizontal, 24).padding(.bottom, 18)
@@ -78,13 +79,7 @@ struct DetailView: View {
                     }
                 }
                 Spacer(minLength: 0)
-                Menu {
-                    CategoryMembershipItems(app: app, store: categoryStore, onCreate: onCreateCategory)
-                } label: {
-                    Label(preferences.text("category.addTo"), systemImage: "folder.badge.plus").labelStyle(.iconOnly)
-                }
-                .menuStyle(.borderlessButton).fixedSize()
-                .help(preferences.text("category.addTo")).accessibilityLabel(preferences.text("category.addTo"))
+                CategoryPickerButton(app: app, store: categoryStore, onCreate: onCreateCategory)
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
@@ -208,6 +203,7 @@ struct CopyButton: View {
                   systemImage: copied ? "checkmark" : "doc.on.doc")
                 .labelStyle(.iconOnly)
         }
+        .buttonStyle(IconButtonStyle(tint: copied ? .green : .accentColor))
         .disabled(text.isEmpty)
         .help(preferences.text(copied ? "info.copied" : "info.copy"))
         .task(id: copied) {
@@ -259,6 +255,7 @@ struct AppIntroductionCard: View {
                               systemImage: translation == nil ? "character.bubble" : "text.bubble")
                             .labelStyle(.iconOnly)
                     }
+                    .buttonStyle(IconButtonStyle())
                     .disabled(original.isEmpty)
                     .help(preferences.text(translation == nil ? "info.translate" : "info.original"))
                 }
