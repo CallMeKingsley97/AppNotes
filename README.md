@@ -1,38 +1,86 @@
-# AppNotes · 应用备注
+# AppNotes
 
-一个 macOS 菜单栏工具，为已安装的应用记录用途、快捷键和提醒。支持 macOS 15 及以上的 Apple Silicon Mac。
+原生 macOS 菜单栏应用，用来记录已安装应用的用途、快捷键和提醒，并整理个人应用分类。
 
-- 原生三栏界面：分类、应用列表、应用详情，详情可切换「应用概览」和「我的备注」。
-- 应用概览包含应用介绍、应用信息、App 内购买三个卡片，支持全文展开、复制，以及按需使用 Apple 翻译。
-- 应用信息展示已安装与商店版本、价格、大小、评分、语言、兼容性等；非商店应用仍可查看本机资料。
-- 在窗口右上角的设置按钮、菜单栏「设置…」或 `⌘,` 中调整偏好。
-- 外观支持跟随系统、浅色、深色；界面语言支持跟随系统、简体中文、English，立即生效并自动保存。
-- `⌃⌥N` 打开快捷搜索，方向键选择、回车打开应用、Esc 关闭。
-- 备注自动保存，已有备注和抓取到的简介不会随界面语言切换而翻译。
-- 侧边栏「我的分类」支持自建分类、重命名和删除。选中分类后点「管理应用」，可批量勾选已安装的 App；也可从应用右键菜单或详情页的文件夹按钮归类。一个 App 可以属于多个分类，点击分类即可查看全部成员。
+[![Build macOS](https://github.com/CallMeKingsley97/AppNotes/actions/workflows/macos.yml/badge.svg)](https://github.com/CallMeKingsley97/AppNotes/actions/workflows/macos.yml)
+[![macOS](https://img.shields.io/badge/macOS-15%2B-black)](#系统要求)
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-分类与归属自动保存在 `~/Library/Application Support/AppNotes/custom-categories.json`，重启与重新扫描后保留。分类是应用内的整理方式，不移动实际 `.app` 文件；删除分类也不会卸载应用或删除备注。暂时卸载的 App 不计入分类页，重新安装到同一路径后会恢复归属。
+## 特性
 
-商店资料按 App ID / Bundle ID 匹配，来自 Apple lookup 接口与公开 App Store 页面，按地区和界面语言缓存 24 小时，也可点击刷新。界面标注实际数据地区；内购清单可能不完整，价格以 App Store 为准。获取失败时保留缓存，并区分「没有内购」和「暂未获取到内购」。Apple 翻译首次使用可能需要下载语言模型。
+- 原生三栏界面：分类、应用列表、应用详情。
+- 应用详情可切换「应用概览」和「我的备注」。
+- 概览包含应用介绍、应用信息和 App 内购买卡片。
+- 支持复制完整信息、展开全文和使用 Apple 翻译。
+- 应用备注自动保存，可在离线状态下记录。
+- `⌃⌥N` 打开快捷搜索，方向键选择，回车打开应用，`Esc` 关闭。
+- 支持跟随系统、浅色和深色外观。
+- 界面语言支持跟随系统、简体中文和 English，切换后立即生效。
+- 支持自建分类、批量管理应用、从右键菜单归类和查看分类成员。
 
-## 构建与验证
+## 系统要求
+
+- macOS 15 或更高版本
+- Apple Silicon Mac
+- Xcode Command Line Tools
+
+## 快速开始
+
+```sh
+git clone https://github.com/CallMeKingsley97/AppNotes.git
+cd AppNotes
+./build.sh
+open Build/AppNotes.app
+```
+
+## 开发命令
+
+| 命令 | 说明 |
+| --- | --- |
+| `./build.sh` | 编译并生成 `Build/AppNotes.app` |
+| `zsh test.sh` | 运行离线测试并校验本地化资源 |
+| `./package.sh` | 构建并生成 DMG |
+| `zsh ui-review.sh` | 编译原生界面检查工具 |
+| `Build/UIReview.app/Contents/MacOS/UIReview` | 运行界面检查，需要在图形会话中执行 |
+
+`Build/Tests/AppDetailsTests --live` 会请求真实 App Store 数据，需要联网。常规测试使用离线数据。
+
+## 项目结构
+
+```text
+Sources/                 SwiftUI 与 AppKit 应用源码
+Tests/                   本地化、数据存储和界面检查测试
+Resources/               英文与简体中文资源
+.github/workflows/       macOS 构建与发布工作流
+build.sh                 构建脚本
+test.sh                  测试脚本
+package.sh               DMG 打包脚本
+```
+
+## 数据与隐私
+
+应用备注、分类和偏好保存在本机。商店资料按 App ID / Bundle ID 匹配，来自 Apple lookup 接口和公开 App Store 页面，并按地区与界面语言缓存 24 小时。
+
+分类不会移动应用文件；删除分类不会卸载应用，也不会删除应用备注。
+
+## 发布
+
+推送 `v*` 标签会触发 GitHub Actions 构建，并上传 DMG 到对应的 GitHub Release。
+
+```sh
+git tag v1.0.0
+git push origin v1.0.0
+```
+
+## 贡献
+
+欢迎提交 Issue 和 Pull Request。提交前请运行：
 
 ```sh
 ./build.sh
 zsh test.sh
 ```
 
-应用位于 `Build/AppNotes.app`。构建脚本会打包 `Resources` 中的中英文资源；`./package.sh` 可生成 DMG。
+## License
 
-可选的原生界面检查：
-
-```sh
-zsh ui-review.sh
-Build/UIReview.app/Contents/MacOS/UIReview
-```
-
-该程序在临时目录创建独立的测试数据，使用相同窗口依次切换两种语言和两种外观，输出到系统临时目录的 `appnotes-ui-review` 文件夹，并检查测试备注的保存内容。需要在 macOS 图形会话中运行。
-
-`Build/Tests/AppDetailsTests --live` 可额外验证真实 App Store 数据，需要联网；常规测试及界面检查均使用离线测试数据。
-
-添加 --appearance-only 参数可只检查外观回归：手动深浅色切回跟随系统、继承外观变化和重新打开设置窗口，并核对原生窗口与 SwiftUI 内容的实际外观是否一致。测试不会更改 macOS 的系统外观设置。
+Released under the [MIT License](LICENSE).
