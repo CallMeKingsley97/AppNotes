@@ -1,6 +1,6 @@
 # AppNotes
 
-原生 macOS 菜单栏应用，用来记录已安装应用的用途、快捷键和提醒，并整理个人应用分类。
+原生 macOS 应用，用来记录已安装应用的用途、快捷键和提醒，并整理个人应用分类。
 
 [![Build macOS](https://github.com/CallMeKingsley97/AppNotes/actions/workflows/macos.yml/badge.svg)](https://github.com/CallMeKingsley97/AppNotes/actions/workflows/macos.yml)
 [![macOS](https://img.shields.io/badge/macOS-15%2B-black)](#系统要求)
@@ -17,6 +17,7 @@
 - 支持跟随系统、浅色和深色外观。
 - 界面语言支持跟随系统、简体中文和 English，切换后立即生效。
 - 支持自建分类、批量管理应用、从右键菜单归类和查看分类成员。
+- 在顶部菜单栏保留快捷入口，同时在 Dock 显示应用图标。
 
 ## 系统要求
 

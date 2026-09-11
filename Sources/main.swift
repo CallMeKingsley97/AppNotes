@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var hudMenuItem = NSMenuItem()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        NSApp.setActivationPolicy(.accessory)
+        NSApp.setActivationPolicy(.regular)
         NSApp.appearance = preferences.appearance.nativeAppearance
         setupStatusItem()
         setupApplicationMenu()
@@ -39,6 +39,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NotesStore.shared.flush()
         SuggestionStore.shared.flush()
         AppDetailsStore.shared.flush()
+    }
+
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows visibleWindows: Bool) -> Bool {
+        guard !visibleWindows else {
+            NSApp.activate(ignoringOtherApps: true)
+            return true
+        }
+
+        openManager()
+        return true
     }
 
     // MARK: - Menu bar
