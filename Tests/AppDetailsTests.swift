@@ -59,6 +59,12 @@ struct AppDetailsTests {
             precondition(page.purchases[2].name == page.purchases[3].name)
             precondition(page.purchases[2].price != page.purchases[3].price)
             precondition(page.requirements.first?.platform == "Mac")
+            let updates = page.releaseNotes ?? []
+            precondition(updates.count == 2)
+            precondition(updates[0].version == listing.version)
+            precondition(updates[0].date != nil)
+            precondition(updates[1].releaseDate == "2026-08-12")
+            precondition(updates[1].notes.contains(language == "zh-Hans" ? "当前版本 & 上一版本" : "current & previous versions"))
             let none = try StorePageDetails.parse(DetailsFixtures.pageHTML(listing: listing, purchases: false), listing: listing, country: "cn")
             precondition(none.hasInAppPurchases == false && none.purchases.isEmpty)
             let unknown = try StorePageDetails.parse(DetailsFixtures.pageHTML(listing: listing, purchases: nil), listing: listing, country: "cn")
@@ -96,6 +102,17 @@ struct AppDetailsTests {
         }
         let partial = try await client.fetch(app: app, country: "cn", language: "zh-Hans")
         precondition(partial.listing.description == listing.description && partial.page == nil)
+        let usApp = AppEntry(path: app.path, name: app.name, bundleID: app.bundleID,
+                             version: app.version, appStoreID: app.appStoreID,
+                             storefrontCountryCode: "us")
+        StubURLProtocol.handler = { request in
+            if request.url!.host == "itunes.apple.com" { return (200, lookupData) }
+            if request.url!.path.hasSuffix("/us/app/id\(listing.trackId)") { return (200, Data("<html></html>".utf8)) }
+            precondition(request.url!.path == "/cn/app/id\(listing.trackId)")
+            return (200, htmlData)
+        }
+        let regionalFallback = try await client.fetch(app: usApp, country: "us", language: "zh-Hans")
+        precondition(regionalFallback.country == "cn" && regionalFallback.page?.purchases.count == 4)
         StubURLProtocol.handler = { _ in (200, Data(#"{"results":[]}"#.utf8)) }
         do {
             _ = try await client.fetch(app: app, country: "cn", language: "en")
@@ -134,6 +151,22 @@ struct AppDetailsTests {
         let restored = AppDetailsStore(directory: directory, loader: loader)
         precondition(restored.details(for: app, language: "zh-Hans") == saved)
         precondition(restored.details(for: app, language: "en") != nil)
+        let legacyDirectory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("AppNotesLegacyDetails-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: legacyDirectory, withIntermediateDirectories: true)
+        var legacyRecord = try JSONSerialization.jsonObject(with: JSONEncoder().encode(saved)) as! [String: Any]
+        legacyRecord.removeValue(forKey: "schemaVersion")
+        try JSONSerialization.data(withJSONObject: [AppDetailsStore.key(for: app, language: "zh-Hans"): legacyRecord])
+            .write(to: legacyDirectory.appendingPathComponent("app-details.json"), options: .atomic)
+        let legacyLoader = CountingLoader()
+        let legacyTime = Date()
+        let legacyStore = AppDetailsStore(directory: legacyDirectory, loader: legacyLoader, now: { legacyTime })
+        let legacyInitialCalls = await legacyLoader.calls
+        precondition(legacyInitialCalls == 0)
+        await legacyStore.load(app: app, language: "zh-Hans")
+        let legacyCalls = await legacyLoader.calls
+        precondition(legacyCalls == 1)
+        precondition(legacyStore.details(for: app, language: "zh-Hans")?.schemaVersion == AppDetails.currentSchemaVersion)
         await loader.setFailure(false)
         await loader.setDelay(true)
         let task = Task { await store.load(app: app, language: "en", force: true) }
@@ -151,12 +184,17 @@ struct AppDetailsTests {
             for app in [
                 AppEntry(path: "/test/ApiCatcher.app", name: "ApiCatcher", bundleID: "com.wujiuye.ApiCatcher",
                          version: nil, appStoreID: 6757103562, storefrontCountryCode: "cn"),
+                AppEntry(path: "/test/Termind.app", name: "Termind", bundleID: "com.akinokaede.termind",
+                         version: nil, appStoreID: 6805856690, storefrontCountryCode: "us"),
                 AppEntry(path: "/test/Xcode.app", name: "Xcode", bundleID: "com.apple.dt.Xcode",
                          version: nil, appStoreID: 497799835, storefrontCountryCode: "cn")
             ] {
                 let result = try await live.fetch(app: app, country: app.storefrontCountryCode!, language: "zh-Hans")
                 precondition(result.listing.matches(app))
                 precondition(result.listing.description?.isEmpty == false)
+                if app.appStoreID == 6805856690 {
+                    precondition(result.page?.releaseNotes?.isEmpty == false)
+                }
                 print("Live \(app.name): country=\(result.country), kind=\(result.listing.kind ?? ""), description=\(result.listing.description!.count) characters, purchases=\(result.page?.purchases.count.description ?? "unavailable"), compatibility=\(result.page?.requirements.count.description ?? "unavailable")")
             }
         }

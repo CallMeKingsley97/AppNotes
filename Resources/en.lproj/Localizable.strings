@@ -125,6 +125,10 @@
 "info.macOS" = "Requires macOS %@ or later.";
 "info.copyright" = "Copyright";
 "info.purchases" = "In-App Purchases";
+"info.updates" = "Recent Updates";
+"info.loadingUpdates" = "Checking App Store update history…";
+"info.updatesUnavailable" = "App Store update history is unavailable.";
+"info.updatesFootnote" = "Update history is from the %@ storefront; the App Store shows the complete record.";
 "info.loadingPurchases" = "Checking the App Store purchase list…";
 "info.noPurchases" = "This listing does not offer in-app purchases.";
 "info.purchasesUnavailable" = "The public in-app purchase list is unavailable.";

@@ -147,6 +147,11 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                             .padding(24).frame(width: 430, height: 430, alignment: .top)
                             .background(Color(nsColor: .windowBackgroundColor))
                     }, size: NSSize(width: 430, height: 430))),
+                    ("updates", window(AppRoot(preferences: preferences) {
+                        AppUpdatesCard(updates: fixture.page?.releaseNotes ?? [], country: fixture.country, loading: false)
+                            .padding(24).frame(width: 430, height: 430, alignment: .top)
+                            .background(Color(nsColor: .windowBackgroundColor))
+                    }, size: NSSize(width: 430, height: 430))),
                     ("unavailable", window(AppRoot(preferences: preferences) {
                         VStack(spacing: 18) {
                             AppIntroductionCard(details: nil, suggestion: nil, loading: false)

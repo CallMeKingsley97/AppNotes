@@ -54,6 +54,7 @@ struct StorePageDetails: Codable, Equatable, Sendable {
     let purchases: [InAppPurchase]
     let hasInAppPurchases: Bool?
     let requirements: [AppRequirement]
+    let releaseNotes: [AppReleaseNote]?
 
     // Only read the requested product's information shelf, not recommendations or marketing text.
     static func parse(_ html: String, listing: StoreListing, country: String) throws -> StorePageDetails {
@@ -103,7 +104,53 @@ struct StorePageDetails: Codable, Equatable, Sendable {
         }
         return StorePageDetails(purchases: purchases,
                                 hasInAppPurchases: offer?["hasInAppPurchases"] as? Bool,
-                                requirements: requirements)
+                                requirements: requirements,
+                                releaseNotes: Self.releaseNotes(from: html))
+    }
+
+    private static func releaseNotes(from html: String) -> [AppReleaseNote] {
+        guard let section = html.range(of: #"<section\b[^>]*\bid\s*=\s*["']mostRecentVersion["'][\s\S]*?</section>"#,
+                                       options: [.regularExpression, .caseInsensitive]) else { return [] }
+        let pattern = #"""
+            <p\b[^>]*>\s*<span\b[^>]*>([\s\S]*?)</span>
+            [\s\S]*?<span\b[^>]*>([\s\S]*?)</span>
+            \s*<time\b[^>]*\bdatetime\s*=\s*["']([^"']+)["'][^>]*>
+        """#
+        let expression = try! NSRegularExpression(pattern: pattern, options: [.allowCommentsAndWhitespace, .caseInsensitive])
+        let text = String(html[section])
+        let matches = expression.matches(in: text, range: NSRange(text.startIndex..., in: text))
+        return matches.compactMap { match in
+            func group(_ index: Int) -> String? {
+                guard let range = Range(match.range(at: index), in: text) else { return nil }
+                let value = String(text[range]).replacingOccurrences(of: "<[^>]+>", with: " ", options: .regularExpression)
+                let decoded = value.replacingOccurrences(of: "&nbsp;", with: " ")
+                    .replacingOccurrences(of: "&amp;", with: "&")
+                    .replacingOccurrences(of: "&lt;", with: "<")
+                    .replacingOccurrences(of: "&gt;", with: ">")
+                    .replacingOccurrences(of: "&quot;", with: "\"")
+                    .replacingOccurrences(of: "&#39;", with: "'")
+                let trimmed = decoded.trimmingCharacters(in: .whitespacesAndNewlines)
+                return trimmed.isEmpty ? nil : trimmed
+            }
+            guard let notes = group(1), let version = group(2), let date = group(3) else { return nil }
+            return AppReleaseNote(version: version, releaseDate: date, notes: notes)
+        }
+    }
+}
+
+struct AppReleaseNote: Codable, Equatable, Sendable, Identifiable {
+    let version: String
+    let releaseDate: String
+    let notes: String
+
+    var id: String { "\(version)-\(releaseDate)" }
+
+    var date: Date? {
+        let formatter = DateFormatter()
+        formatter.locale = Locale(identifier: "en_US_POSIX")
+        formatter.timeZone = TimeZone(secondsFromGMT: 0)
+        formatter.dateFormat = "yyyy-MM-dd"
+        return formatter.date(from: releaseDate)
     }
 }
 
@@ -113,6 +160,9 @@ struct AppDetails: Codable, Equatable, Sendable {
     let language: String
     let fetchedAt: Date
     let page: StorePageDetails?
+    let schemaVersion: Int?
+
+    static let currentSchemaVersion = 2
 
     var storeURL: URL { listing.storeURL(country: country, language: language) }
 }
@@ -145,6 +195,7 @@ actor AppStoreDetailsClient: AppDetailsLoading {
         var countries = [country, language == "zh-Hans" ? "cn" : "us", "us", "cn"]
         var seen = Set<String>()
         countries = countries.filter { seen.insert($0).inserted }
+        var fallback: AppDetails?
         for region in countries {
             try Task.checkCancellation()
             var lookup = URLComponents(string: "https://itunes.apple.com/lookup")!
@@ -176,9 +227,13 @@ actor AppStoreDetailsClient: AppDetailsLoading {
                 try Task.checkCancellation()
                 // Lookup data remains useful if the public page is unavailable or its structure changes.
             }
-            return AppDetails(listing: listing, country: region, language: language, fetchedAt: Date(), page: page)
+            let details = AppDetails(listing: listing, country: region, language: language, fetchedAt: Date(),
+                                     page: page, schemaVersion: AppDetails.currentSchemaVersion)
+            if page != nil { return details }
+            if fallback == nil { fallback = details }
         }
-        throw AppDetailsError.notFound
+        guard let fallback else { throw AppDetailsError.notFound }
+        return fallback
     }
 
     private func response(from url: URL) async throws -> Data {
@@ -232,7 +287,9 @@ final class AppDetailsStore: ObservableObject {
         let key = Self.key(for: app, language: language)
         guard !loading.contains(key) else { return }
         if !force {
-            if let cached = records[key], now().timeIntervalSince(cached.fetchedAt) < 86_400 { return }
+            if let cached = records[key],
+               cached.schemaVersion == AppDetails.currentSchemaVersion,
+               now().timeIntervalSince(cached.fetchedAt) < 86_400 { return }
             if failedAttempts.contains(key) { return }
         }
         loading.insert(key)

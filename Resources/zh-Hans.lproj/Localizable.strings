@@ -125,6 +125,10 @@
 "info.macOS" = "需要 macOS %@ 或更高版本。";
 "info.copyright" = "版权";
 "info.purchases" = "App 内购买";
+"info.updates" = "最近更新";
+"info.loadingUpdates" = "正在查询 App Store 更新记录…";
+"info.updatesUnavailable" = "暂未获取到 App Store 更新记录。";
+"info.updatesFootnote" = "更新记录来自%@商店，完整历史以 App Store 为准。";
 "info.loadingPurchases" = "正在查询商店内购清单…";
 "info.noPurchases" = "当前商店页面未提供 App 内购买。";
 "info.purchasesUnavailable" = "暂未获取到公开的内购清单。";

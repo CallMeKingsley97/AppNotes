@@ -25,8 +25,9 @@ struct DetailView: View {
                 Picker(preferences.text("info.section"), selection: $tab) {
                     Text(preferences.text("info.overview")).tag("overview")
                     Text(preferences.text("detail.note")).tag("notes")
+                    Text(preferences.text("info.updates")).tag("updates")
                 }
-                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 250)
+                .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 330)
                 Spacer(minLength: 12)
                 if loading {
                     ProgressView().controlSize(.small)
@@ -46,6 +47,8 @@ struct DetailView: View {
             Divider()
             if tab == "notes" {
                 NoteEditorView(app: app, store: store, suggestionStore: suggestionStore)
+            } else if tab == "updates" {
+                AppUpdatesView(details: details, loading: loading)
             } else {
                 overview
             }
@@ -495,6 +498,81 @@ struct InAppPurchasesCard: View {
                         .fixedSize(horizontal: false, vertical: true)
                     Link(preferences.text("info.viewStore"), destination: details.storeURL)
                         .font(.caption).padding(.top, 8)
+                }
+            }
+        }
+    }
+}
+
+private struct AppUpdatesView: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    let details: AppDetails?
+    let loading: Bool
+
+    private var updates: [AppReleaseNote] { details?.page?.releaseNotes ?? [] }
+
+    var body: some View {
+        ScrollView {
+            AppUpdatesCard(updates: updates, country: details?.country, loading: loading)
+                .padding(24)
+                .frame(maxWidth: 820)
+                .frame(maxWidth: .infinity)
+        }
+    }
+}
+
+struct AppUpdatesCard: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    let updates: [AppReleaseNote]
+    let country: String?
+    let loading: Bool
+
+    private var copyText: String {
+        updates.map { update in
+            let date = update.date?.formatted(.dateTime.year().month().day().locale(preferences.locale)) ?? update.releaseDate
+            return "\(preferences.text("detail.version")) \(update.version) · \(date)\n\(update.notes)"
+        }.joined(separator: "\n\n")
+    }
+    private var regionName: String? {
+        guard let country else { return nil }
+        return preferences.locale.localizedString(forRegionCode: country.uppercased()) ?? country.uppercased()
+    }
+
+    var body: some View {
+        InfoCard(title: preferences.text("info.updates"), symbol: "clock.badge.checkmark") {
+            if !updates.isEmpty { CopyButton(text: copyText) }
+        } content: {
+            VStack(alignment: .leading, spacing: 0) {
+                if updates.isEmpty {
+                    Label(preferences.text(loading ? "info.loadingUpdates" : "info.updatesUnavailable"),
+                          systemImage: loading ? "arrow.triangle.2.circlepath" : "info.circle")
+                        .font(.callout).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true).padding(.vertical, 8)
+                } else {
+                    ForEach(Array(updates.enumerated()), id: \.offset) { index, update in
+                        VStack(alignment: .leading, spacing: 8) {
+                            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                                Text(preferences.text("detail.version") + " " + update.version)
+                                    .font(.callout.weight(.medium))
+                                if let date = update.date {
+                                    Text(date, format: .dateTime.year().month().day().locale(preferences.locale))
+                                        .font(.caption).foregroundStyle(.secondary)
+                                }
+                                Spacer(minLength: 8)
+                            }
+                            Text(update.notes).font(.callout).lineSpacing(5)
+                                .foregroundStyle(.primary).textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                        .padding(.vertical, 13)
+                        if index < updates.count - 1 { Divider().opacity(0.65) }
+                    }
+                }
+                if regionName != nil {
+                    Divider().padding(.vertical, 12)
+                    Text(preferences.text("info.updatesFootnote", regionName!))
+                        .font(.caption).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
         }

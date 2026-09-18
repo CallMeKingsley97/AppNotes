@@ -50,14 +50,30 @@ enum DetailsFixtures {
             ]
         ]
         let data = try JSONSerialization.data(withJSONObject: ["data": [page]])
-        return "<html><script type=\"application/json\" id=\"serialized-server-data\">\(String(decoding: data, as: UTF8.self))</script></html>"
+        let currentNotes = chinese
+            ? "优化本地缓存，修复搜索结果可能重复的问题。"
+            : "Improve local caching and fix duplicated search results."
+        let previousNotes = chinese
+            ? "新增键盘快捷键，列表加载速度更快。当前版本 &amp; 上一版本都支持这些改进。"
+            : "Add keyboard shortcuts and make lists load faster. Both the current &amp; previous versions include these changes."
+        let datePrefix = String(listing.currentVersionReleaseDate?.prefix(10) ?? "2026-09-04")
+        let releaseHistory = #"""
+            <section id="mostRecentVersion" data-test-id="shelf-wrapper" aria-label="新功能">
+              <div class="content-container"><ul>
+                <li><p class="detail"><span class="notes">\#(currentNotes)</span><div class="metadata"><span>\#(listing.version ?? "1.0")</span><time datetime="\#(datePrefix)">2 days ago</time></div></p></li>
+                <li><p class="detail"><span class="notes">\#(previousNotes)</span><div class="metadata"><span>1.9</span><time datetime="2026-08-12">August 13</time></div></p></li>
+              </ul></div>
+            </section>
+            """#
+        return "<html><script type=\"application/json\" id=\"serialized-server-data\">\(String(decoding: data, as: UTF8.self))</script>\(releaseHistory)</html>"
     }
 
     static func details(app: AppEntry = app, country: String = "cn", language: String = "zh-Hans") throws -> AppDetails {
         let listing = try listing(for: app, language: language)
         let page = try StorePageDetails.parse(pageHTML(listing: listing, language: language, country: country),
                                              listing: listing, country: country)
-        return AppDetails(listing: listing, country: country, language: language, fetchedAt: Date(), page: page)
+        return AppDetails(listing: listing, country: country, language: language, fetchedAt: Date(),
+                          page: page, schemaVersion: AppDetails.currentSchemaVersion)
     }
 }
 
