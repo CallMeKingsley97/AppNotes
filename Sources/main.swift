@@ -7,8 +7,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var managerWindow: NSWindow?
     private var settingsWindow: NSWindow?
     private var searchPanel: FloatingPanel?
+    private let searchPresence = PanelPresence()
+    private var searchGeneration = 0
+    private var searchHiding = false
     private var hudPanel: NSPanel?
+    private var hudHosting: NSHostingView<AppRoot<HUDView>>?
+    private let hudContent = HUDContent(presented: false)
     private var hudTimer: Timer?
+    private var hudGeneration = 0
     private let preferences = AppPreferences.shared
     private let library = AppLibrary.shared
     private var hudMenuItem = NSMenuItem()
@@ -176,13 +182,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                 defer: false
             )
             window.title = preferences.text("app.title")
-            window.titleVisibility = .visible
             window.titlebarAppearsTransparent = true
             window.toolbarStyle = .unified
+            window.titleVisibility = .hidden
             window.contentViewController = NSHostingController(rootView: AppRoot {
                 ManagerView(onSettings: { [weak self] in self?.openSettings() },
                             onSearch: { [weak self] in self?.showSearch() })
             })
+            window.titleVisibility = .hidden
             window.setContentSize(NSSize(width: 1080, height: 700))
             window.setFrameAutosaveName("AppNotes.manager")
             window.isReleasedWhenClosed = false
@@ -215,36 +222,85 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func showSearch() {
-        if searchPanel != nil {
-            searchPanel?.makeKeyAndOrderFront(nil)
+        let panel = ensureSearchPanel()
+        searchHiding = false
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchPresence.session += 1
+        let appearing = !panel.isVisible || panel.alphaValue < 0.99
+        guard appearing else {
+            panel.makeKeyAndOrderFront(nil)
             NSApp.activate(ignoringOtherApps: true)
             return
         }
 
-        let panel = FloatingPanel()
-        let root = AppRoot {
-            SearchOverlayView { [weak self] in
-                self?.searchPanel?.close()
-                self?.searchPanel = nil
-            }
+        panel.ignoresMouseEvents = false
+        if !panel.isVisible {
+            searchPresence.shown = false
+            panel.alphaValue = 0
+            placeSearchPanel(panel)
         }
-        let hosting = NSHostingView(rootView: root)
-        hosting.frame = NSRect(origin: .zero, size: hosting.fittingSize)
-        panel.contentView = hosting
-        panel.setContentSize(hosting.fittingSize)
-        panel.delegate = self
-        searchPanel = panel
-
-        if let screen = NSScreen.main {
-            let sf = screen.visibleFrame
-            let size = panel.frame.size
-            let x = sf.midX - size.width / 2
-            let y = sf.midY + sf.height * 0.25 - size.height / 2
-            panel.setFrameOrigin(NSPoint(x: x, y: y))
-        }
-
         panel.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
+        DispatchQueue.main.async { [weak self] in
+            guard let self, generation == self.searchGeneration else { return }
+            self.searchPresence.shown = true
+            self.animate(panel, to: 1)
+        }
+    }
+
+    private func ensureSearchPanel() -> FloatingPanel {
+        if let searchPanel { return searchPanel }
+        let panel = FloatingPanel()
+        panel.onCancel = { [weak self] in self?.dismissSearch() }
+        let presence = searchPresence
+        let hosting = NSHostingView(rootView: AppRoot {
+            SearchPanelRoot(presence: presence) { [weak self] in
+                self?.dismissSearch()
+            }
+        })
+        let size = NSSize(width: 580, height: 430)
+        hosting.frame = NSRect(origin: .zero, size: size)
+        panel.contentView = hosting
+        panel.setContentSize(size)
+        panel.alphaValue = 0
+        panel.delegate = self
+        searchPanel = panel
+        return panel
+    }
+
+    private func placeSearchPanel(_ panel: NSPanel) {
+        guard let screen = NSScreen.main ?? panel.screen ?? NSScreen.screens.first else { return }
+        let sf = screen.visibleFrame
+        let size = panel.frame.size
+        panel.setFrameOrigin(NSPoint(x: sf.midX - size.width / 2, y: sf.midY + sf.height * 0.25 - size.height / 2))
+    }
+
+    private func dismissSearch() {
+        guard let panel = searchPanel, panel.isVisible, !searchHiding else { return }
+        searchHiding = true
+        searchGeneration += 1
+        let generation = searchGeneration
+        searchPresence.shown = false
+        panel.ignoresMouseEvents = true
+        panel.resignKey()
+        animate(panel, to: 0) { [weak self] in
+            guard let self, generation == self.searchGeneration else { return }
+            panel.orderOut(nil)
+            panel.alphaValue = 0
+            panel.ignoresMouseEvents = false
+            self.searchHiding = false
+        }
+    }
+
+    private func animate(_ panel: NSPanel, to alpha: CGFloat, completion: (() -> Void)? = nil) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = Motion.panelSeconds
+            context.timingFunction = CAMediaTimingFunction(controlPoints: 0.23, 1, 0.32, 1)
+            panel.animator().alphaValue = alpha
+        } completionHandler: {
+            completion?()
+        }
     }
 
     @objc private func toggleHUD() {
@@ -319,14 +375,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     private func showHUD(appName: String, note: String, appPath: String?) {
+        let panel = ensureHUDPanel()
         hudTimer?.invalidate()
-        hudPanel?.orderOut(nil)
+        hudGeneration += 1
+        let generation = hudGeneration
+        hudContent.appName = appName
+        hudContent.note = note
+        hudContent.appPath = appPath
+        resizeHUD()
 
-        let hosting = NSHostingView(rootView: AppRoot { HUDView(appName: appName, note: note, appPath: appPath) })
-        let size = hosting.fittingSize
-        hosting.frame = NSRect(origin: .zero, size: size)
+        let appearing = !panel.isVisible || panel.alphaValue < 0.99
+        if appearing {
+            if !panel.isVisible {
+                hudContent.presented = false
+                panel.alphaValue = 0
+            }
+            panel.orderFrontRegardless()
+            DispatchQueue.main.async { [weak self] in
+                guard let self, generation == self.hudGeneration else { return }
+                self.resizeHUD()
+                self.hudContent.presented = true
+                self.animate(panel, to: 1)
+            }
+        } else {
+            hudContent.presented = true
+            DispatchQueue.main.async { [weak self] in self?.resizeHUD() }
+        }
 
-        let panel = NSPanel(contentRect: NSRect(origin: .zero, size: size), styleMask: [.borderless], backing: .buffered, defer: false)
+        hudTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
+            self?.dismissHUD(generation: generation)
+        }
+    }
+
+    private func ensureHUDPanel() -> NSPanel {
+        if let hudPanel { return hudPanel }
+        let content = hudContent
+        let hosting = NSHostingView(rootView: AppRoot { HUDView(content: content) })
+        hosting.frame = NSRect(x: 0, y: 0, width: 390, height: 120)
+        let panel = NSPanel(contentRect: hosting.frame, styleMask: [.borderless], backing: .buffered, defer: false)
         panel.contentView = hosting
         panel.level = .floating
         panel.isOpaque = false
@@ -334,23 +420,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         panel.ignoresMouseEvents = true
         panel.hasShadow = true
         panel.collectionBehavior = [.canJoinAllSpaces, .stationary]
-
-        guard let screen = NSScreen.main ?? NSScreen.screens.first else { return }
-        let sf = screen.visibleFrame
-        panel.setFrameOrigin(NSPoint(x: sf.midX - size.width / 2, y: sf.maxY - size.height - 28))
-        panel.orderFrontRegardless()
+        panel.alphaValue = 0
+        hudHosting = hosting
         hudPanel = panel
+        return panel
+    }
 
-        hudTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-            DispatchQueue.main.async {
-                NSAnimationContext.runAnimationGroup { context in
-                    context.duration = NSWorkspace.shared.accessibilityDisplayShouldReduceMotion ? 0 : 0.35
-                    self?.hudPanel?.animator().alphaValue = 0
-                } completionHandler: {
-                    self?.hudPanel?.orderOut(nil)
-                    self?.hudPanel = nil
-                }
-            }
+    private func resizeHUD() {
+        guard let panel = hudPanel, let hosting = hudHosting else { return }
+        hosting.frame.size.width = 390
+        hosting.layoutSubtreeIfNeeded()
+        var size = hosting.fittingSize
+        if size.width < 300 { size.width = 390 }
+        if size.height < 40 { size.height = 88 }
+        guard let screen = panel.screen ?? NSScreen.main ?? NSScreen.screens.first else { return }
+        let sf = screen.visibleFrame
+        let origin = NSPoint(x: sf.midX - size.width / 2, y: sf.maxY - size.height - 28)
+        panel.setFrame(NSRect(origin: origin, size: size), display: true)
+        hosting.frame = NSRect(origin: .zero, size: size)
+    }
+
+    private func dismissHUD(generation: Int) {
+        guard generation == hudGeneration, let panel = hudPanel else { return }
+        hudContent.presented = false
+        animate(panel, to: 0) { [weak self] in
+            guard let self, generation == self.hudGeneration else { return }
+            panel.orderOut(nil)
+            panel.alphaValue = 0
         }
     }
 
@@ -370,13 +466,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func windowDidResignKey(_ notification: Notification) {
         if let window = notification.object as? NSWindow, window === searchPanel {
-            window.close()
-            searchPanel = nil
+            dismissSearch()
         }
     }
 }
 
 final class FloatingPanel: NSPanel {
+    var onCancel: (() -> Void)?
+
     init() {
         super.init(
             contentRect: NSRect(x: 0, y: 0, width: 560, height: 380),
@@ -398,7 +495,11 @@ final class FloatingPanel: NSPanel {
     override var canBecomeMain: Bool { true }
 
     override func cancelOperation(_ sender: Any?) {
-        close()
+        if let onCancel {
+            onCancel()
+        } else {
+            close()
+        }
     }
 }
 

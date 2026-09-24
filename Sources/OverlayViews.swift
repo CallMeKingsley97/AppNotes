@@ -3,11 +3,14 @@ import AppKit
 
 struct SearchOverlayView: View {
     @EnvironmentObject private var preferences: AppPreferences
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var library = AppLibrary.shared
     let onClose: () -> Void
+    var focusSession = 0
     @State private var query = ""
     @State private var highlighted = 0
+    @State private var keyboardNavigation = false
     @FocusState private var isFocused: Bool
 
     private var results: [AppEntry] {
@@ -56,7 +59,16 @@ struct SearchOverlayView: View {
                             }
                             .padding(.horizontal, 10).padding(.bottom, 10)
                         }
-                        .onChange(of: highlighted) { _, index in proxy.scrollTo(index) }
+                        .onChange(of: highlighted) { _, index in
+                            guard keyboardNavigation else {
+                                proxy.scrollTo(index)
+                                return
+                            }
+                            keyboardNavigation = false
+                            withAnimation(Motion.scroll(reduced: reduceMotion)) {
+                                proxy.scrollTo(index)
+                            }
+                        }
                         .onChange(of: query) { _, _ in proxy.scrollTo(0, anchor: .top) }
                     }
                 }
@@ -72,25 +84,30 @@ struct SearchOverlayView: View {
             .padding(.horizontal, 18).padding(.vertical, 10)
         }
         .frame(width: 580, height: 430)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 18))
+        .background(.regularMaterial, in: Radius.shape(Radius.surface))
         .overlay {
-            RoundedRectangle(cornerRadius: 18).strokeBorder(.primary.opacity(0.1), lineWidth: 1)
+            Radius.shape(Radius.surface).strokeBorder(.primary.opacity(0.1), lineWidth: 1)
                 .allowsHitTesting(false)
         }
-        .clipShape(RoundedRectangle(cornerRadius: 18))
+        .clipShape(Radius.shape(Radius.surface))
         .onAppear {
             library.scanIfNeeded()
             isFocused = true
         }
+        .onChange(of: focusSession) { _, _ in isFocused = true }
         .onChange(of: query) { _, _ in highlighted = 0 }
         .onChange(of: results.map(\.id)) { _, _ in highlighted = min(highlighted, max(results.count - 1, 0)) }
         .onExitCommand(perform: onClose)
         .onMoveCommand { direction in
+            let next: Int
             switch direction {
-            case .down: highlighted = min(highlighted + 1, max(results.count - 1, 0))
-            case .up: highlighted = max(highlighted - 1, 0)
-            default: break
+            case .down: next = min(highlighted + 1, max(results.count - 1, 0))
+            case .up: next = max(highlighted - 1, 0)
+            default: return
             }
+            guard next != highlighted else { return }
+            keyboardNavigation = true
+            highlighted = next
         }
     }
 
@@ -128,41 +145,86 @@ struct ResultRow: View {
         }
         .buttonStyle(.plain)
         .background(isHighlighted ? Color.accentColor.opacity(0.14) : (isHovered ? Color.primary.opacity(0.04) : .clear),
-                    in: RoundedRectangle(cornerRadius: 9))
+                    in: Radius.shape(Radius.group))
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
         .accessibilityAddTraits(isHighlighted ? .isSelected : [])
     }
 }
 
+final class PanelPresence: ObservableObject {
+    @Published var shown = false
+    @Published var session = 0
+}
+
+struct SearchPanelRoot: View {
+    @ObservedObject var presence: PanelPresence
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let onClose: () -> Void
+
+    var body: some View {
+        SearchOverlayView(onClose: onClose, focusSession: presence.session)
+            .scaleEffect(reduceMotion || presence.shown ? 1 : 0.985)
+            .animation(Motion.panel(reduced: reduceMotion), value: presence.shown)
+    }
+}
+
+final class HUDContent: ObservableObject {
+    @Published var appName: String
+    @Published var note: String
+    @Published var appPath: String?
+    @Published var presented: Bool
+
+    init(appName: String = "", note: String = "", appPath: String? = nil, presented: Bool = true) {
+        self.appName = appName
+        self.note = note
+        self.appPath = appPath
+        self.presented = presented
+    }
+
+    var identity: String { appName + "\u{0}" + note + "\u{0}" + (appPath ?? "") }
+}
+
 struct HUDView: View {
     @EnvironmentObject private var preferences: AppPreferences
-    let appName: String
-    let note: String
-    let appPath: String?
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @ObservedObject var content: HUDContent
+
+    init(content: HUDContent) {
+        self.content = content
+    }
+
+    init(appName: String, note: String, appPath: String?) {
+        self.content = HUDContent(appName: appName, note: note, appPath: appPath, presented: true)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 12) {
-            if let appPath {
+            if let appPath = content.appPath {
                 Image(nsImage: IconCache.icon(for: appPath)).resizable().frame(width: 36, height: 36)
             } else {
                 Image(systemName: "note.text").font(.title2).foregroundStyle(Color.accentColor)
             }
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
-                    Text(appName).font(.callout.weight(.semibold)).lineLimit(1)
+                    Text(content.appName).font(.callout.weight(.semibold)).lineLimit(1)
                     Spacer(minLength: 12)
                     Text(preferences.text("hud.note")).font(.system(size: 9, weight: .medium)).foregroundStyle(.tertiary)
                 }
-                Text(note).font(.callout).foregroundStyle(.secondary).lineLimit(3)
+                Text(content.note).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)
             }
         }
+        .id(content.identity)
+        .transition(.opacity)
         .padding(16).frame(width: 390, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .background(.regularMaterial, in: Radius.shape(Radius.surface))
         .overlay {
-            RoundedRectangle(cornerRadius: 14).strokeBorder(.primary.opacity(0.1), lineWidth: 1)
+            Radius.shape(Radius.surface).strokeBorder(.primary.opacity(0.1), lineWidth: 1)
         }
         .fixedSize(horizontal: false, vertical: true)
+        .motionCrossfade(id: content.identity)
+        .scaleEffect(reduceMotion || content.presented ? 1 : 0.985)
+        .animation(Motion.panel(reduced: reduceMotion), value: content.presented)
     }
 }

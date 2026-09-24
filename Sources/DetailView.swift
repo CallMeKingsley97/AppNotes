@@ -4,6 +4,7 @@ import Translation
 
 struct DetailView: View {
     @EnvironmentObject private var preferences: AppPreferences
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let app: AppEntry
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var suggestionStore = SuggestionStore.shared
@@ -12,6 +13,9 @@ struct DetailView: View {
     var onCreateCategory: () -> Void = {}
     @State private var tab = "overview"
     @State private var local = LocalAppDetails()
+    @State private var refreshID = 0
+    @State private var refreshConfirmed = false
+    @State private var confirmationID = 0
 
     private var language: String { preferences.language.resolvedIdentifier() }
     private var requestKey: String { AppDetailsStore.key(for: app, language: language) }
@@ -29,29 +33,23 @@ struct DetailView: View {
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 330)
                 Spacer(minLength: 12)
-                if loading {
-                    ProgressView().controlSize(.small)
-                        .help(preferences.text("info.loading"))
-                } else {
-                    Button {
-                        Task { await detailsStore.load(app: app, language: language, force: true) }
-                    } label: {
-                        Label(preferences.text("info.refresh"), systemImage: "arrow.clockwise")
-                            .labelStyle(.iconOnly)
-                    }
-                    .buttonStyle(IconButtonStyle()).help(preferences.text("info.refresh"))
-                    .accessibilityLabel(preferences.text("info.refresh"))
-                }
+                refreshButton
             }
             .padding(.horizontal, 24).padding(.bottom, 18)
             Divider()
-            if tab == "notes" {
-                NoteEditorView(app: app, store: store, suggestionStore: suggestionStore)
-            } else if tab == "updates" {
-                AppUpdatesView(details: details, loading: loading)
-            } else {
-                overview
+            Group {
+                if tab == "notes" {
+                    NoteEditorView(app: app, store: store, suggestionStore: suggestionStore)
+                        .transition(.opacity)
+                } else if tab == "updates" {
+                    AppUpdatesView(details: details, loading: loading)
+                        .transition(.opacity)
+                } else {
+                    overview.transition(.opacity)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
+            .animation(Motion.content(reduced: reduceMotion), value: tab)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .task(id: requestKey) {
@@ -120,6 +118,41 @@ struct DetailView: View {
         .buttonStyle(.borderedProminent)
     }
 
+    private var refreshButton: some View {
+        Button {
+            refreshID += 1
+        } label: {
+            Label(preferences.text("info.refresh"), systemImage: refreshConfirmed ? "checkmark" : "arrow.clockwise")
+                .labelStyle(.iconOnly)
+                .opacity(loading ? 0 : 1)
+        }
+        .buttonStyle(IconButtonStyle(tint: refreshConfirmed ? .green : .primary))
+        .allowsHitTesting(!loading)
+        .accessibilityRespondsToUserInteraction(!loading)
+        .overlay {
+            if loading {
+                ProgressView().controlSize(.small)
+            }
+        }
+        .animation(Motion.content(reduced: reduceMotion), value: loading)
+        .animation(Motion.content(reduced: reduceMotion), value: refreshConfirmed)
+        .help(preferences.text(loading ? "info.loading" : "info.refresh"))
+        .accessibilityLabel(preferences.text(loading ? "info.loading" : "info.refresh"))
+        .task(id: refreshID) {
+            guard refreshID > 0 else { return }
+            await detailsStore.load(app: app, language: language, force: true)
+            guard !Task.isCancelled, detailsStore.errors[requestKey] == nil else { return }
+            refreshConfirmed = true
+            confirmationID += 1
+        }
+        .task(id: confirmationID) {
+            guard confirmationID > 0 else { return }
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            refreshConfirmed = false
+        }
+    }
+
     private var overview: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -136,20 +169,25 @@ struct DetailView: View {
 
     private var sourceStatus: some View {
         VStack(alignment: .leading, spacing: 6) {
-            if let details {
-                HStack(alignment: .firstTextBaseline) {
-                    Label("App Store · " + regionName(details.country), systemImage: "checkmark.seal")
-                        .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                    Spacer(minLength: 6)
-                    Text(details.fetchedAt, format: .dateTime.month().day().hour().minute())
-                        .font(.caption).foregroundStyle(.tertiary)
-                        .help(preferences.text("info.fetchedAt"))
+            Group {
+                if let details {
+                    HStack(alignment: .firstTextBaseline) {
+                        Label("App Store · " + regionName(details.country), systemImage: "checkmark.seal")
+                            .font(.caption.weight(.medium)).foregroundStyle(.secondary)
+                        Spacer(minLength: 6)
+                        Text(details.fetchedAt, format: .dateTime.month().day().hour().minute())
+                            .font(.caption).foregroundStyle(.tertiary)
+                            .help(preferences.text("info.fetchedAt"))
+                    }
+                    .transition(.opacity)
+                } else {
+                    Label(preferences.text(loading ? "info.loading" : "info.localSource"),
+                          systemImage: loading ? "arrow.triangle.2.circlepath" : "desktopcomputer")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .transition(.opacity)
                 }
-            } else {
-                Label(preferences.text(loading ? "info.loading" : "info.localSource"),
-                      systemImage: loading ? "arrow.triangle.2.circlepath" : "desktopcomputer")
-                    .font(.caption).foregroundStyle(.secondary)
             }
+            .motionCrossfade(id: details?.fetchedAt ?? (loading ? .distantPast : .distantFuture))
             if let error = detailsStore.errors[requestKey] {
                 Text(preferences.text(error))
                     .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
@@ -175,7 +213,7 @@ struct InfoCard<Actions: View, Content: View>: View {
                     .font(.system(size: 13, weight: .medium))
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 28, height: 28)
-                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 7))
+                    .background(Color.accentColor.opacity(0.08), in: Radius.shape(Radius.control))
                 Text(title).font(.headline)
                 Spacer(minLength: 8)
                 actions().controlSize(.small).buttonStyle(.borderless)
@@ -184,11 +222,7 @@ struct InfoCard<Actions: View, Content: View>: View {
         }
         .padding(18)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1).allowsHitTesting(false)
-        }
+        .elevatedCard()
     }
 }
 
@@ -206,7 +240,7 @@ struct CopyButton: View {
                   systemImage: copied ? "checkmark" : "doc.on.doc")
                 .labelStyle(.iconOnly)
         }
-        .buttonStyle(IconButtonStyle(tint: copied ? .green : .accentColor))
+        .buttonStyle(IconButtonStyle(tint: copied ? .green : .primary))
         .disabled(text.isEmpty)
         .help(preferences.text(copied ? "info.copied" : "info.copy"))
         .task(id: copied) {
@@ -284,31 +318,38 @@ struct AppIntroductionCard: View {
                     Text(preferences.text(suggestion.source == "brew" ? "suggestion.brew" : "suggestion.appstore"))
                         .font(.caption).foregroundStyle(.secondary)
                 }
-                if original.isEmpty {
-                    Text(preferences.text(loading ? "info.loadingDescription" : "info.noDescription"))
-                        .font(.callout).foregroundStyle(.secondary)
-                        .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
-                } else {
-                    if translation != nil {
-                        Label(preferences.text("info.translated"), systemImage: "character.bubble")
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                    Text(displayed).font(.system(size: 13)).lineSpacing(5)
-                        .foregroundStyle(.primary).textSelection(.enabled)
-                        .lineLimit(expanded ? nil : 8).fixedSize(horizontal: false, vertical: true)
-                    if !displayed.isEmpty {
-                        Button {
-                            expanded.toggle()
-                        } label: {
-                            HStack(spacing: 5) {
-                                Text(preferences.text(expanded ? "info.showLess" : "info.showMore"))
-                                Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2)
+                Group {
+                    if original.isEmpty {
+                        Text(preferences.text(loading ? "info.loadingDescription" : "info.noDescription"))
+                            .font(.callout).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, minHeight: 60, alignment: .leading)
+                            .transition(.opacity)
+                    } else {
+                        VStack(alignment: .leading, spacing: 14) {
+                            if translation != nil {
+                                Label(preferences.text("info.translated"), systemImage: "character.bubble")
+                                    .font(.caption).foregroundStyle(.secondary)
                             }
-                            .font(.caption.weight(.medium))
+                            Text(displayed).font(.system(size: 13)).lineSpacing(5)
+                                .foregroundStyle(.primary).textSelection(.enabled)
+                                .lineLimit(expanded ? nil : 8).fixedSize(horizontal: false, vertical: true)
+                            if !displayed.isEmpty {
+                                Button {
+                                    expanded.toggle()
+                                } label: {
+                                    HStack(spacing: 5) {
+                                        Text(preferences.text(expanded ? "info.showLess" : "info.showMore"))
+                                        Image(systemName: expanded ? "chevron.up" : "chevron.down").font(.caption2)
+                                    }
+                                    .font(.caption.weight(.medium))
+                                }
+                                .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                            }
                         }
-                        .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                        .transition(.opacity)
                     }
                 }
+                .motionCrossfade(id: original.isEmpty ? (loading ? "loading" : "empty") : "ready")
             }
         }
         .translationTask(configuration) { session in
@@ -475,21 +516,26 @@ struct InAppPurchasesCard: View {
             }
         } content: {
             VStack(alignment: .leading, spacing: 0) {
-                if purchases.isEmpty {
-                    Label(preferences.text(message), systemImage: details?.page?.hasInAppPurchases == false ? "checkmark.circle" : "info.circle")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true).padding(.vertical, 8)
-                } else {
-                    ForEach(Array(purchases.enumerated()), id: \.offset) { index, purchase in
-                        HStack(alignment: .firstTextBaseline, spacing: 16) {
-                            Text(purchase.name).textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                            Text(purchase.price).fontWeight(.medium).monospacedDigit().fixedSize()
+                Group {
+                    if purchases.isEmpty {
+                        Label(preferences.text(message), systemImage: details?.page?.hasInAppPurchases == false ? "checkmark.circle" : "info.circle")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true).padding(.vertical, 8)
+                            .transition(.opacity)
+                    } else {
+                        ForEach(Array(purchases.enumerated()), id: \.offset) { index, purchase in
+                            HStack(alignment: .firstTextBaseline, spacing: 16) {
+                                Text(purchase.name).textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                Text(purchase.price).fontWeight(.medium).monospacedDigit().fixedSize()
+                            }
+                            .font(.callout).padding(.vertical, 12)
+                            if index < purchases.count - 1 { Divider().opacity(0.65) }
                         }
-                        .font(.callout).padding(.vertical, 12)
-                        if index < purchases.count - 1 { Divider().opacity(0.65) }
+                        .transition(.opacity)
                     }
                 }
+                .motionCrossfade(id: purchases.isEmpty ? message : "\(purchases.count)")
                 if let details {
                     Divider().padding(.vertical, 12)
                     Text(preferences.text("info.purchaseFootnote",
@@ -543,13 +589,15 @@ struct AppUpdatesCard: View {
             if !updates.isEmpty { CopyButton(text: copyText) }
         } content: {
             VStack(alignment: .leading, spacing: 0) {
-                if updates.isEmpty {
-                    Label(preferences.text(loading ? "info.loadingUpdates" : "info.updatesUnavailable"),
-                          systemImage: loading ? "arrow.triangle.2.circlepath" : "info.circle")
-                        .font(.callout).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true).padding(.vertical, 8)
-                } else {
-                    ForEach(Array(updates.enumerated()), id: \.offset) { index, update in
+                Group {
+                    if updates.isEmpty {
+                        Label(preferences.text(loading ? "info.loadingUpdates" : "info.updatesUnavailable"),
+                              systemImage: loading ? "arrow.triangle.2.circlepath" : "info.circle")
+                            .font(.callout).foregroundStyle(.secondary)
+                            .fixedSize(horizontal: false, vertical: true).padding(.vertical, 8)
+                            .transition(.opacity)
+                    } else {
+                        ForEach(Array(updates.enumerated()), id: \.offset) { index, update in
                         VStack(alignment: .leading, spacing: 8) {
                             HStack(alignment: .firstTextBaseline, spacing: 10) {
                                 Text(preferences.text("detail.version") + " " + update.version)
@@ -567,7 +615,10 @@ struct AppUpdatesCard: View {
                         .padding(.vertical, 13)
                         if index < updates.count - 1 { Divider().opacity(0.65) }
                     }
+                    .transition(.opacity)
                 }
+                }
+                .motionCrossfade(id: updates.isEmpty ? (loading ? "loading" : "empty") : "\(updates.count)")
                 if regionName != nil {
                     Divider().padding(.vertical, 12)
                     Text(preferences.text("info.updatesFootnote", regionName!))

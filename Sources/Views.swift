@@ -29,6 +29,7 @@ private enum LibraryFilter: String, CaseIterable, Identifiable {
 
 struct ManagerView: View {
     @EnvironmentObject private var preferences: AppPreferences
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @ObservedObject var store = NotesStore.shared
     @ObservedObject var suggestionStore = SuggestionStore.shared
     @ObservedObject var library = AppLibrary.shared
@@ -72,16 +73,20 @@ struct ManagerView: View {
                     DetailView(app: app, store: store, suggestionStore: suggestionStore, detailsStore: detailsStore,
                                categoryStore: categoryStore, onCreateCategory: { beginNewCategory(including: app) })
                         .id(app.id)
+                        .transition(.opacity)
                 } else {
                     EmptyState(symbol: "note.text", title: preferences.text("detail.empty"),
                                message: preferences.text("detail.empty.help"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .background(Color(nsColor: .textBackgroundColor))
+                        .transition(.opacity)
                 }
             }
+            .animation(Motion.content(reduced: reduceMotion), value: selectedApp?.id)
             .navigationSplitViewColumnWidth(min: 380, ideal: 520)
         }
         .navigationSplitViewStyle(.balanced)
+        .toolbar(removing: .title)
         .toolbar {
             ToolbarItemGroup(placement: .primaryAction) {
                 Button(action: onSearch) {
@@ -97,7 +102,9 @@ struct ManagerView: View {
         .frame(minWidth: 880, minHeight: 580)
         .onAppear {
             library.scanIfNeeded()
-            reconcileSelection()
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) { reconcileSelection() }
         }
         .onChange(of: filter) { _, _ in
             query = ""
@@ -147,7 +154,8 @@ struct ManagerView: View {
                     Button { beginNewCategory() } label: {
                         Label(preferences.text("category.new"), systemImage: "plus")
                     }
-                    .buttonStyle(.plain).foregroundStyle(.secondary).padding(.vertical, 4)
+                    .buttonStyle(QuietPressButtonStyle(cornerRadius: 6))
+                    .foregroundStyle(.secondary).padding(.vertical, 4)
                     .accessibilityIdentifier("category.new")
                 }
             }
@@ -158,7 +166,7 @@ struct ManagerView: View {
                         .font(.title3.weight(.medium))
                         .foregroundStyle(Color.accentColor)
                         .frame(width: 34, height: 34)
-                        .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 9))
+                        .background(Color.accentColor.opacity(0.1), in: Radius.shape(Radius.group))
                     VStack(alignment: .leading, spacing: 2) {
                         Text("AppNotes").font(.headline)
                         Text(preferences.text("app.title")).font(.caption).foregroundStyle(.secondary)
@@ -178,10 +186,9 @@ struct ManagerView: View {
                 .padding(16)
                 .contentShape(Rectangle())
             }
-            .buttonStyle(.plain)
+            .buttonStyle(QuietPressButtonStyle(cornerRadius: 0))
             .foregroundStyle(.secondary)
         }
-        .navigationTitle(preferences.text("app.title"))
     }
 
     private func filterRow(_ item: LibraryFilter) -> some View {
@@ -238,6 +245,7 @@ struct ManagerView: View {
                     HStack {
                         Button { managingCategory = category } label: {
                             Label(preferences.text("category.manage"), systemImage: "plus.circle")
+                                .quietAffordance(cornerRadius: 6)
                         }
                         .accessibilityIdentifier("category.manage")
                         Spacer(minLength: 6)
@@ -424,13 +432,7 @@ struct NoteEditorView: View {
                 }
             }
             .frame(minHeight: 210, idealHeight: 250)
-            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
-            .overlay {
-                RoundedRectangle(cornerRadius: 10)
-                    .strokeBorder(isEditing ? Color.accentColor.opacity(0.65) : Color.primary.opacity(0.1),
-                                  lineWidth: isEditing ? 2 : 1)
-                    .allowsHitTesting(false)
-            }
+            .fieldChrome(focused: isEditing, radius: Radius.group)
             Label(preferences.text("detail.autosave"), systemImage: "checkmark.circle")
                 .font(.caption).foregroundStyle(.secondary)
         }
@@ -460,9 +462,9 @@ struct NoteEditorView: View {
             }
         }
         .padding(16)
-        .background(Color.accentColor.opacity(0.055), in: RoundedRectangle(cornerRadius: 10))
+        .background(Color.accentColor.opacity(0.055), in: Radius.shape(Radius.group))
         .overlay {
-            RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.12), lineWidth: 1)
+            Radius.shape(Radius.group).strokeBorder(Color.accentColor.opacity(0.12), lineWidth: 1)
         }
     }
 

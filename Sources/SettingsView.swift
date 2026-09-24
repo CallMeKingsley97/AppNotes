@@ -10,7 +10,7 @@ struct SettingsView: View {
                     .font(.system(size: 24, weight: .medium))
                     .foregroundStyle(Color.accentColor)
                     .frame(width: 52, height: 52)
-                    .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 13))
+                    .background(Color.accentColor.opacity(0.1), in: Radius.shape(Radius.surface))
                 VStack(alignment: .leading, spacing: 5) {
                     Text(preferences.text("settings.title")).font(.title2.weight(.semibold))
                     Text(preferences.text("settings.personalize")).font(.callout).foregroundStyle(.secondary)
@@ -82,7 +82,7 @@ struct SettingsView: View {
                 AppearancePreview(appearance: appearance)
                     .frame(height: 66)
                     .overlay {
-                        RoundedRectangle(cornerRadius: 7)
+                        Radius.shape(Radius.group)
                             .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.12),
                                           lineWidth: selected ? 2 : 1)
                     }
@@ -92,14 +92,11 @@ struct SettingsView: View {
                 }
                 .font(.callout)
                 .foregroundStyle(selected ? Color.accentColor : .primary)
-                Image(systemName: selected ? "checkmark.circle.fill" : "circle")
-                    .font(.body)
-                    .foregroundStyle(selected ? Color.accentColor : Color.secondary.opacity(0.4))
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .buttonStyle(QuietPressButtonStyle(cornerRadius: Radius.group))
         .accessibilityLabel(preferences.text("appearance.\(appearance.rawValue)"))
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
@@ -121,7 +118,7 @@ private struct AppearancePreview: View {
                 }
             }
         }
-        .clipShape(RoundedRectangle(cornerRadius: 7))
+        .clipShape(Radius.shape(Radius.group))
         .accessibilityHidden(true)
     }
 
@@ -131,15 +128,15 @@ private struct AppearancePreview: View {
                 HStack(spacing: 3) {
                     ForEach(0..<3) { _ in Circle().fill(dark ? .white.opacity(0.3) : .black.opacity(0.2)).frame(width: 4, height: 4) }
                 }
-                RoundedRectangle(cornerRadius: 2).fill(Color.accentColor.opacity(0.7)).frame(height: 6)
-                RoundedRectangle(cornerRadius: 2).fill(dark ? .white.opacity(0.15) : .black.opacity(0.1)).frame(height: 4)
+                Radius.shape(2).fill(Color.accentColor.opacity(0.7)).frame(height: 6)
+                Radius.shape(2).fill(dark ? .white.opacity(0.15) : .black.opacity(0.1)).frame(height: 4)
                 Spacer(minLength: 0)
             }
             .padding(8).frame(width: 42)
             .background(dark ? Color(white: 0.19) : Color(white: 0.9))
             VStack(alignment: .leading, spacing: 6) {
-                RoundedRectangle(cornerRadius: 2).fill(dark ? .white.opacity(0.65) : .black.opacity(0.45)).frame(width: 28, height: 5)
-                RoundedRectangle(cornerRadius: 2).fill(dark ? .white.opacity(0.12) : .black.opacity(0.07)).frame(height: 22)
+                Radius.shape(2).fill(dark ? .white.opacity(0.65) : .black.opacity(0.45)).frame(width: 28, height: 5)
+                Radius.shape(2).fill(dark ? .white.opacity(0.12) : .black.opacity(0.07)).frame(height: 22)
                 Spacer(minLength: 0)
             }
             .padding(10).frame(maxWidth: .infinity)

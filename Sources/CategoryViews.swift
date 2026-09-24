@@ -89,20 +89,15 @@ private struct CategoryPickerPanel: View {
                 .foregroundStyle(Color.accentColor)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
-                .contentShape(RoundedRectangle(cornerRadius: 8))
+                .background(Color.accentColor.opacity(0.08), in: Radius.shape(Radius.control))
+                .contentShape(Radius.shape(Radius.control))
             }
             .buttonStyle(.plain)
             .accessibilityLabel(preferences.text("category.new"))
         }
         .padding(14)
         .frame(width: 272)
-        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 12))
-        .overlay {
-            RoundedRectangle(cornerRadius: 12)
-                .strokeBorder(Color.primary.opacity(0.07), lineWidth: 1)
-                .allowsHitTesting(false)
-        }
+        .elevatedCard()
     }
 }
 
@@ -111,6 +106,7 @@ private struct CategoryPickerRow: View {
     let category: CustomAppCategory
     let isSelected: Bool
     let action: () -> Void
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
     private var emblemTint: Color { isSelected ? .accentColor : .secondary }
@@ -122,7 +118,7 @@ private struct CategoryPickerRow: View {
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(emblemTint)
                     .frame(width: 22, height: 22)
-                    .background(emblemTint.opacity(0.10), in: RoundedRectangle(cornerRadius: 6))
+                    .background(emblemTint.opacity(0.10), in: Radius.shape(Radius.control))
 
                 Text(category.name)
                     .font(.callout.weight(isSelected ? .medium : .regular))
@@ -139,16 +135,16 @@ private struct CategoryPickerRow: View {
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                Radius.shape(Radius.control)
                     .fill(isSelected ? Color.accentColor.opacity(isHovering ? 0.13 : 0.09)
                                         : Color.primary.opacity(isHovering ? 0.05 : 0.02))
             )
-            .contentShape(RoundedRectangle(cornerRadius: 8))
+            .contentShape(Radius.shape(Radius.control))
         }
         .buttonStyle(.plain)
         .onHover { isHovering = $0 }
-        .animation(.easeOut(duration: 0.16), value: isHovering)
-        .animation(.easeOut(duration: 0.16), value: isSelected)
+        .animation(Motion.content(reduced: reduceMotion), value: isHovering)
+        .animation(Motion.content(reduced: reduceMotion), value: isSelected)
         .accessibilityLabel(category.name)
         .accessibilityValue(isSelected ? "1" : "0")
     }
@@ -189,7 +185,12 @@ struct CategoryEditor: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text(preferences.text("category.name")).font(.callout.weight(.medium))
                 TextField(preferences.text("category.namePlaceholder"), text: $name)
-                    .textFieldStyle(.roundedBorder).focused($focused)
+                    .textFieldStyle(.plain)
+                    .font(.body)
+                    .focused($focused)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .fieldChrome(focused: focused)
                     .accessibilityLabel(preferences.text("category.name"))
                     .accessibilityIdentifier("category.name")
                     .onSubmit(save)
@@ -327,7 +328,7 @@ private struct CategoryEmblem: View {
         Image(systemName: "folder")
             .font(.system(size: 22, weight: .medium)).foregroundStyle(Color.accentColor)
             .frame(width: 48, height: 48)
-            .background(Color.accentColor.opacity(0.1), in: RoundedRectangle(cornerRadius: 12))
+            .background(Color.accentColor.opacity(0.1), in: Radius.shape(Radius.surface))
             .accessibilityHidden(true)
     }
 }
