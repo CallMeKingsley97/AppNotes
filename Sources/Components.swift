@@ -38,9 +38,27 @@ struct AppIcon: View {
     let app: AppEntry
     let size: CGFloat
     var body: some View {
-        Image(nsImage: IconCache.icon(for: app.path))
-            .resizable().interpolation(.high).frame(width: size, height: size)
+        artwork
+            .frame(width: size, height: size)
             .accessibilityHidden(true)
+    }
+
+    @ViewBuilder private var artwork: some View {
+        if app.origin == .manual, let url = URL.web(app.artworkURL) {
+            AsyncImage(url: url) { phase in
+                switch phase {
+                case .success(let image):
+                    image.resizable().interpolation(.high)
+                default:
+                    Image(systemName: "app.fill")
+                        .font(.system(size: size * 0.62))
+                        .foregroundStyle(.secondary)
+                        .frame(width: size, height: size)
+                }
+            }
+        } else {
+            Image(nsImage: IconCache.icon(for: app.path)).resizable().interpolation(.high)
+        }
     }
 }
 
@@ -279,6 +297,16 @@ extension AppEntry {
             || (bundleID ?? "").localizedCaseInsensitiveContains(query)
             || note.localizedCaseInsensitiveContains(query)
     }
-    func open() { NSWorkspace.shared.open(URL(fileURLWithPath: path)) }
-    func reveal() { NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)]) }
+    func open() {
+        if origin == .manual, let id = appStoreID,
+           let url = URL(string: "https://apps.apple.com/\(storeCountryCode)/app/id\(id)") {
+            NSWorkspace.shared.open(url)
+            return
+        }
+        NSWorkspace.shared.open(URL(fileURLWithPath: path))
+    }
+    func reveal() {
+        guard origin != .manual else { return }
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: path)])
+    }
 }

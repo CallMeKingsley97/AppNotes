@@ -10,6 +10,8 @@ struct DetailView: View {
     @ObservedObject var suggestionStore = SuggestionStore.shared
     @ObservedObject var detailsStore = AppDetailsStore.shared
     @ObservedObject var categoryStore = CustomCategoryStore.shared
+    @ObservedObject var imports = ManualImportStore.shared
+    @ObservedObject var library = AppLibrary.shared
     var onCreateCategory: () -> Void = {}
     @State private var tab = "overview"
     @State private var local = LocalAppDetails()
@@ -84,15 +86,13 @@ struct DetailView: View {
             }
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 8) {
-                    openButton
-                    if let details { Link(preferences.text("info.appStore"), destination: details.storeURL) }
-                    Button(preferences.text("detail.reveal"), action: app.reveal)
+                    if app.origin != .manual { openButton }
+                    headerActions
                 }
                 HStack(spacing: 8) {
-                    openButton
+                    if app.origin != .manual { openButton }
                     Menu {
-                        if let details { Link(preferences.text("info.appStore"), destination: details.storeURL) }
-                        Button(preferences.text("detail.reveal"), action: app.reveal)
+                        headerActions
                     } label: {
                         Label(preferences.text("info.more"), systemImage: "ellipsis")
                     }
@@ -109,6 +109,29 @@ struct DetailView: View {
             }
         }
         .padding(24)
+    }
+
+    @ViewBuilder private var headerActions: some View {
+        if let destination = storeDestination {
+            Link(preferences.text(app.origin == .manual ? "info.viewStore" : "info.appStore"), destination: destination)
+        }
+        if app.origin == .manual {
+            Button(preferences.text("import.remove"), action: removeImport)
+        } else {
+            Button(preferences.text("detail.reveal"), action: app.reveal)
+        }
+    }
+
+    private var storeDestination: URL? {
+        if let details { return details.storeURL }
+        guard app.origin == .manual, let id = app.appStoreID else { return nil }
+        return URL(string: "https://apps.apple.com/\(app.storeCountryCode)/app/id\(id)")
+    }
+
+    private func removeImport() {
+        guard let id = app.appStoreID else { return }
+        imports.remove(id)
+        library.reloadImports()
     }
 
     private var openButton: some View {
@@ -180,6 +203,10 @@ struct DetailView: View {
                             .help(preferences.text("info.fetchedAt"))
                     }
                     .transition(.opacity)
+                } else if app.origin == .manual && !loading {
+                    Label(preferences.text("category.manual"), systemImage: "square.and.arrow.down")
+                        .font(.caption).foregroundStyle(.secondary)
+                        .transition(.opacity)
                 } else {
                     Label(preferences.text(loading ? "info.loading" : "info.localSource"),
                           systemImage: loading ? "arrow.triangle.2.circlepath" : "desktopcomputer")
@@ -404,7 +431,11 @@ struct AppInformationCard: View {
         }
         add("info.appID", (listing?.trackId ?? app.appStoreID).map(String.init))
         add("detail.bundle", app.bundleID ?? listing?.bundleId)
-        add("info.installedVersion", app.version)
+        if app.origin == .manual {
+            if listing?.version == nil { add("info.storeVersion", app.version) }
+        } else {
+            add("info.installedVersion", app.version)
+        }
         add("info.storeVersion", listing?.version)
         add("info.price", price)
         if let size = listing?.fileSizeBytes.flatMap(Int64.init), size >= 0 {
@@ -450,9 +481,12 @@ struct AppInformationCard: View {
     }
 
     private var copyText: String {
-        (values.map { preferences.text($0.key) + ": " + $0.value }
-         + requirements.map { $0.platform + ": " + $0.text }
-         + [preferences.text("detail.location") + ": " + app.path]).joined(separator: "\n")
+        var lines = values.map { preferences.text($0.key) + ": " + $0.value }
+            + requirements.map { $0.platform + ": " + $0.text }
+        if app.origin != .manual {
+            lines.append(preferences.text("detail.location") + ": " + app.path)
+        }
+        return lines.joined(separator: "\n")
     }
 
     var body: some View {
@@ -462,7 +496,9 @@ struct AppInformationCard: View {
             VStack(spacing: 0) {
                 ForEach(values) { item in
                     infoRow(preferences.text(item.key), value: item.value)
-                    Divider().opacity(0.65)
+                    if item.id != values.last?.id || hasInformationFooter {
+                        Divider().opacity(0.65)
+                    }
                 }
                 if !requirements.isEmpty {
                     VStack(alignment: .leading, spacing: 12) {
@@ -476,15 +512,23 @@ struct AppInformationCard: View {
                         }
                     }
                     .frame(maxWidth: .infinity, alignment: .leading).padding(.vertical, 13)
-                    Divider().opacity(0.65)
+                    if app.origin != .manual || (local.copyright?.isEmpty == false) {
+                        Divider().opacity(0.65)
+                    }
                 }
-                infoRow(preferences.text("detail.location"), value: app.path)
+                if app.origin != .manual {
+                    infoRow(preferences.text("detail.location"), value: app.path)
+                }
                 if let copyright = local.copyright, !copyright.isEmpty {
-                    Divider().opacity(0.65)
+                    if app.origin != .manual { Divider().opacity(0.65) }
                     infoRow(preferences.text("info.copyright"), value: copyright)
                 }
             }
         }
+    }
+
+    private var hasInformationFooter: Bool {
+        !requirements.isEmpty || app.origin != .manual || local.copyright?.isEmpty == false
     }
 
     private func infoRow(_ title: String, value: String) -> some View {

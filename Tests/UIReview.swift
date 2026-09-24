@@ -60,6 +60,7 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         let suggestions = SuggestionStore(directory: dataDirectory)
         let detailsStore = AppDetailsStore(directory: dataDirectory, loader: FixtureDetailsLoader())
         let categories = CustomCategoryStore(directory: dataDirectory)
+        let imports = ManualImportStore(directory: dataDirectory)
         let network = categories.create(name: "翻墙")!
         _ = categories.create(name: "设计与创作")
         let apps = [
@@ -87,7 +88,7 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         let windows: [(String, NSWindow)] = [
             ("manager", window(AppRoot(preferences: preferences) {
                 ManagerView(store: notes, suggestionStore: suggestions, library: library, detailsStore: detailsStore, categoryStore: categories,
-                            onSettings: {}, onSearch: {})
+                            imports: imports, onSettings: {}, onSearch: {})
                     .background(AppearanceProbe(state: appearanceStates["manager"]!))
             }, size: NSSize(width: 1080, height: 700))),
             ("settings", window(AppRoot(preferences: preferences) {

@@ -2,7 +2,7 @@ import SwiftUI
 import AppKit
 
 private enum LibraryFilter: String, CaseIterable, Identifiable {
-    case all, noted, system, appStore, downloaded
+    case all, noted, system, appStore, downloaded, manual
     var id: Self { self }
     var titleKey: String {
         switch self {
@@ -35,7 +35,9 @@ struct ManagerView: View {
     @ObservedObject var library = AppLibrary.shared
     @ObservedObject var detailsStore = AppDetailsStore.shared
     @ObservedObject var categoryStore = CustomCategoryStore.shared
+    @ObservedObject var imports = ManualImportStore.shared
     @State private var query = ""
+    @State private var pendingSelection: String?
     @State private var selection: String?
     @State private var filter: String? = LibraryFilter.all.rawValue
     @State private var categoryEditor: CustomAppCategory?
@@ -71,7 +73,8 @@ struct ManagerView: View {
             Group {
                 if let app = selectedApp {
                     DetailView(app: app, store: store, suggestionStore: suggestionStore, detailsStore: detailsStore,
-                               categoryStore: categoryStore, onCreateCategory: { beginNewCategory(including: app) })
+                               categoryStore: categoryStore, imports: imports, library: library,
+                               onCreateCategory: { beginNewCategory(including: app) })
                         .id(app.id)
                         .transition(.opacity)
                 } else {
@@ -102,13 +105,27 @@ struct ManagerView: View {
         .frame(minWidth: 880, minHeight: 580)
         .onAppear {
             library.scanIfNeeded()
-            var transaction = Transaction()
-            transaction.disablesAnimations = true
-            withTransaction(transaction) { reconcileSelection() }
+            if imports.focusPath == nil {
+                var transaction = Transaction()
+                transaction.disablesAnimations = true
+                withTransaction(transaction) { reconcileSelection() }
+            } else {
+                consumeImportFocus()
+            }
+        }
+        .onChange(of: imports.focusPath) { _, path in
+            guard path != nil else { return }
+            consumeImportFocus()
         }
         .onChange(of: filter) { _, _ in
             query = ""
-            selection = filtered.first?.id
+            if let pendingSelection, filtered.contains(where: { $0.id == pendingSelection }) {
+                selection = pendingSelection
+                self.pendingSelection = nil
+            } else {
+                self.pendingSelection = nil
+                selection = filtered.first?.id
+            }
         }
         .onChange(of: query) { _, _ in reconcileSelection() }
         .onChange(of: library.apps) { _, _ in reconcileSelection() }
@@ -135,6 +152,13 @@ struct ManagerView: View {
         } message: {
             Text(preferences.text(categoryStore.errorKey ?? "category.saveFailed"))
         }
+        .alert(preferences.text("import.failed.title"), isPresented: Binding(
+            get: { imports.errorKey != nil },
+            set: { if !$0 { imports.errorKey = nil } })) {
+            Button(preferences.text("info.ok"), role: .cancel) { imports.errorKey = nil }
+        } message: {
+            Text(preferences.text(imports.errorKey ?? "import.saveFailed"))
+        }
     }
 
     private var sidebar: some View {
@@ -148,6 +172,7 @@ struct ManagerView: View {
                     filterRow(.system)
                     filterRow(.appStore)
                     filterRow(.downloaded)
+                    filterRow(.manual)
                 }
                 Section(preferences.text("category.title")) {
                     ForEach(categoryStore.categories) { category in customCategoryRow(category) }
@@ -270,8 +295,13 @@ struct ManagerView: View {
                         .listRowSeparator(.hidden)
                         .tag(app.id)
                         .contextMenu {
-                            Button(preferences.text("detail.open")) { app.open() }
-                            Button(preferences.text("detail.reveal")) { app.reveal() }
+                            if app.origin == .manual {
+                                Button(preferences.text("info.viewStore")) { app.open() }
+                                Button(preferences.text("import.remove")) { removeImport(app) }
+                            } else {
+                                Button(preferences.text("detail.open")) { app.open() }
+                                Button(preferences.text("detail.reveal")) { app.reveal() }
+                            }
                             Divider()
                             Menu(preferences.text("category.addTo")) {
                                 CategoryMembershipItems(app: app, store: categoryStore) { beginNewCategory(including: app) }
@@ -305,6 +335,9 @@ struct ManagerView: View {
                 EmptyState(symbol: "magnifyingglass", title: preferences.text("search.noResults"),
                            message: preferences.text("search.tryAgain"), compact: true)
                 Button(preferences.text("search.clear")) { query = "" }
+            } else if activeFilter == .manual {
+                EmptyState(symbol: "square.and.arrow.down", title: preferences.text("import.empty"),
+                           message: preferences.text("import.empty.help"), compact: true)
             } else if activeFilter == .noted {
                 EmptyState(symbol: "square.and.pencil", title: preferences.text("library.noNotes"),
                            message: preferences.text("library.noNotes.help"), compact: true)
@@ -330,6 +363,27 @@ struct ManagerView: View {
     private func beginNewCategory(including app: AppEntry? = nil) {
         newCategoryApp = app
         showingNewCategory = true
+    }
+
+    private func consumeImportFocus() {
+        guard let path = imports.focusPath else { return }
+        pendingSelection = path
+        if filter != LibraryFilter.manual.rawValue {
+            filter = LibraryFilter.manual.rawValue
+        } else {
+            query = ""
+            selection = path
+            pendingSelection = nil
+        }
+        DispatchQueue.main.async {
+            if self.imports.focusPath == path { self.imports.focusPath = nil }
+        }
+    }
+
+    private func removeImport(_ app: AppEntry) {
+        guard let id = app.appStoreID else { return }
+        imports.remove(id)
+        library.reloadImports()
     }
 }
 

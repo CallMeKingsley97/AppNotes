@@ -39,6 +39,7 @@
 "category.system" = "System Apps";
 "category.appStore" = "App Store";
 "category.downloaded" = "Downloaded";
+"category.manual" = "Manual Import";
 "library.count" = "%ld apps";
 "library.list" = "Applications";
 "library.scan" = "Rescan Applications";
@@ -49,6 +50,17 @@
 "search.clear" = "Clear Search";
 "library.empty" = "No Apps Yet";
 "library.empty.help" = "Installed apps will appear here after a scan.";
+"import.prompt.title" = "Import This App?";
+"import.prompt.message" = "The clipboard has an App Store link for “%@”. It will appear under Manual Import.";
+"import.confirm" = "Import";
+"import.cancel" = "Not Now";
+"import.failed.title" = "Couldn’t Import";
+"import.failed.message" = "App Store information couldn’t be loaded. Check your connection, copy the link again, and return to AppNotes.";
+"import.remove" = "Remove Import";
+"import.empty" = "No Imported Apps";
+"import.empty.help" = "Copy an App Store link, then return to AppNotes to import it.";
+"import.saveFailed" = "The app couldn’t be saved. Check the available disk space and file permissions, then try again.";
+"import.loadFailed" = "Saved imports couldn’t be read. The original file was left unchanged.";
 "library.noNotes" = "Your Notes Start Here";
 "library.noNotes.help" = "Select an app in All Apps and write your first note.";
 "library.browse" = "Browse All Apps";

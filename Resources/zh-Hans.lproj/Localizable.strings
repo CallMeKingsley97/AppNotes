@@ -39,6 +39,7 @@
 "category.system" = "系统应用";
 "category.appStore" = "App Store";
 "category.downloaded" = "网络下载";
+"category.manual" = "手动导入";
 "library.count" = "%ld 个应用";
 "library.list" = "应用列表";
 "library.scan" = "重新扫描应用";
@@ -49,6 +50,17 @@
 "search.clear" = "清除搜索";
 "library.empty" = "暂无应用";
 "library.empty.help" = "扫描后，已安装的应用会显示在这里。";
+"import.prompt.title" = "导入这个应用？";
+"import.prompt.message" = "剪贴板中有「%@」的 App Store 链接。导入后，它会出现在「手动导入」里。";
+"import.confirm" = "导入";
+"import.cancel" = "暂不";
+"import.failed.title" = "无法导入";
+"import.failed.message" = "暂时无法获取这个 App Store 应用的信息。请检查网络，重新复制链接后再回到 AppNotes。";
+"import.remove" = "移除导入";
+"import.empty" = "还没有手动导入的应用";
+"import.empty.help" = "在 App Store 复制应用链接，回到 AppNotes 后可以选择导入。";
+"import.saveFailed" = "应用未能保存。请检查磁盘空间和文件权限后重试。";
+"import.loadFailed" = "无法读取已保存的手动导入应用，原文件已保留。";
 "library.noNotes" = "从第一条备注开始";
 "library.noNotes.help" = "在「所有应用」中选择一个应用，记下它的用途。";
 "library.browse" = "浏览所有应用";

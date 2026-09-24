@@ -1,6 +1,11 @@
 import Foundation
 import AppKit
 
+enum AppOrigin: String, Hashable, Sendable {
+    case installed
+    case manual
+}
+
 struct AppEntry: Identifiable, Hashable, Sendable {
     let path: String
     let name: String
@@ -8,19 +13,31 @@ struct AppEntry: Identifiable, Hashable, Sendable {
     let version: String?
     let appStoreID: Int64?
     let storefrontCountryCode: String?
+    var origin: AppOrigin = .installed
+    var artworkURL: String? = nil
 
     var id: String { path }
     var fileName: String { (path as NSString).lastPathComponent }
+
+    var storeCountryCode: String {
+        if let code = storefrontCountryCode?.lowercased(),
+           code.count == 2, code.allSatisfy(\.isLetter) {
+            return code
+        }
+        return "us"
+    }
 }
 
 enum AppCategory: String, CaseIterable, Identifiable {
     case system
     case appStore
     case downloaded
+    case manual
 
     var id: Self { self }
 
     static func of(_ app: AppEntry) -> AppCategory {
+        if app.origin == .manual { return .manual }
         if app.path.hasPrefix("/System/") {
             return .system
         }
@@ -35,7 +52,23 @@ enum AppCategory: String, CaseIterable, Identifiable {
         case .system: return "apple.logo"
         case .appStore: return "bag"
         case .downloaded: return "arrow.down.circle"
+        case .manual: return "square.and.arrow.down"
         }
+    }
+}
+
+enum LibraryCatalog {
+    /// Installed copies win. A manual import stays only while the same store ID or bundle is absent.
+    static func combine(installed: [AppEntry], imported: [AppEntry]) -> [AppEntry] {
+        let installedIDs = Set(installed.compactMap(\.appStoreID))
+        let installedBundles = Set(installed.compactMap(\.bundleID))
+        let extra = imported.filter { app in
+            guard app.origin == .manual else { return false }
+            if let id = app.appStoreID, installedIDs.contains(id) { return false }
+            if let bundle = app.bundleID, installedBundles.contains(bundle) { return false }
+            return true
+        }
+        return (installed + extra).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 }
 
@@ -44,10 +77,14 @@ final class AppLibrary: ObservableObject {
     static let shared = AppLibrary()
     @Published private(set) var apps: [AppEntry] = []
     @Published private(set) var isScanning = false
+    var additionalApps: () -> [AppEntry] = { [] }
+    private var installed: [AppEntry] = []
     private var hasScanned = false
 
     init(apps: [AppEntry]? = nil) {
-        self.apps = apps ?? []
+        let initial = apps ?? []
+        self.apps = initial
+        self.installed = initial.filter { $0.origin != .manual }
         hasScanned = apps != nil
     }
 
@@ -61,11 +98,21 @@ final class AppLibrary: ObservableObject {
         DispatchQueue.global(qos: .userInitiated).async {
             let scanned = AppScanner.scan()
             DispatchQueue.main.async {
-                self.apps = scanned
-                self.isScanning = false
+                self.installed = scanned
                 self.hasScanned = true
+                self.isScanning = false
+                self.publish()
             }
         }
+    }
+
+    func reloadImports() {
+        publish()
+    }
+
+    private func publish() {
+        let base = hasScanned ? installed : apps.filter { $0.origin != .manual }
+        apps = LibraryCatalog.combine(installed: base, imported: additionalApps())
     }
 }
 

@@ -17,9 +17,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private var hudGeneration = 0
     private let preferences = AppPreferences.shared
     private let library = AppLibrary.shared
+    private let clipboardImports = ClipboardImportMonitor()
     private var hudMenuItem = NSMenuItem()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        library.additionalApps = { ManualImportStore.shared.entries }
+        library.refresh()
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = preferences.appearance.nativeAppearance
         setupStatusItem()
@@ -31,7 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         setupKeyMonitor()
         registerHotkey()
         observeAppSwitch()
-        library.refresh()
+        clipboardImports.onImported = { [weak self] in self?.openManager() }
 
         if !UserDefaults.standard.bool(forKey: "didOpenManagerOnce") {
             UserDefaults.standard.set(true, forKey: "didOpenManagerOnce")
@@ -45,6 +48,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NotesStore.shared.flush()
         SuggestionStore.shared.flush()
         AppDetailsStore.shared.flush()
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        clipboardImports.consider()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows visibleWindows: Bool) -> Bool {
