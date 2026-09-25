@@ -12,6 +12,8 @@ struct DetailView: View {
     @ObservedObject var categoryStore = CustomCategoryStore.shared
     @ObservedObject var imports = ManualImportStore.shared
     @ObservedObject var library = AppLibrary.shared
+    @ObservedObject var monitor = PriceMonitorStore.shared
+    @State private var showingWatch = false
     var onCreateCategory: () -> Void = {}
     @State private var tab = "overview"
     @State private var local = LocalAppDetails()
@@ -54,6 +56,10 @@ struct DetailView: View {
             .animation(Motion.content(reduced: reduceMotion), value: tab)
         }
         .background(Color(nsColor: .windowBackgroundColor))
+        .sheet(isPresented: $showingWatch) {
+            PriceWatchEditor(monitor: monitor, entry: watchEntry,
+                existing: monitor.state.watches.first { $0.app.storeID == watchEntry.appStoreID })
+        }
         .task(id: requestKey) {
             let path = app.path
             let localDetails = await Task.detached(priority: .utility) { LocalAppDetails.read(path: path) }.value
@@ -111,7 +117,20 @@ struct DetailView: View {
         .padding(24)
     }
 
+    private var watchEntry: AppEntry {
+        let listing = details?.listing
+        return AppEntry(path: app.path, name: app.name, bundleID: listing?.bundleId ?? app.bundleID,
+            version: app.version, appStoreID: listing?.trackId ?? app.appStoreID,
+            storefrontCountryCode: details?.country ?? app.storefrontCountryCode,
+            origin: app.origin, artworkURL: app.artworkURL)
+    }
+
     @ViewBuilder private var headerActions: some View {
+        if watchEntry.appStoreID != nil {
+            Button { showingWatch = true } label: {
+                Label(preferences.text(monitor.state.watches.contains { $0.app.storeID == watchEntry.appStoreID } ? "monitor.edit" : "monitor.follow"), systemImage: "heart")
+            }.disabled(!monitor.writable)
+        }
         if let destination = storeDestination {
             Link(preferences.text(app.origin == .manual ? "info.viewStore" : "info.appStore"), destination: destination)
         }

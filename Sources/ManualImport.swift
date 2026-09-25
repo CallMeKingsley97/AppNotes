@@ -233,7 +233,7 @@ struct AppStoreLinkLookup {
             URLQueryItem(name: "lang", value: country == "cn" ? "zh_cn" : "en_us"),
         ]
         guard let url = components.url else { return nil }
-        let (data, response) = try await session.data(from: url)
+        let (data, response) = try await AppleRequestQueue.shared.data(from: url, session: session)
         guard let http = response as? HTTPURLResponse, http.statusCode == 200 else { return nil }
         return Self.record(from: data, country: country, trackID: id)
     }

@@ -26,17 +26,21 @@ enum DetailsFixtures {
     }
 
     static func pageHTML(listing: StoreListing, language: String = "zh-Hans", purchases: Bool? = true,
-                         includeList: Bool = true, country: String = "cn") throws -> String {
+                         includeList: Bool = true, country: String = "cn",
+                         intentPlatform: String? = "mac", appPlatforms: [String] = ["mac"]) throws -> String {
         let chinese = language == "zh-Hans"
         var offer: [String: Any] = [:]
         if let purchases { offer["hasInAppPurchases"] = purchases }
         let pairs = includeList && purchases == true
             ? [["Pro 终身会员", "¥68.00"], ["Ultimate 终身会员", "¥168.00"], ["Ultimate", "¥98.00"], ["Ultimate", "¥28.00"]]
             : []
+        var intent = ["id": String(listing.trackId), "storefront": country, "language": chinese ? "zh-Hans" : "en-GB"]
+        intent["platform"] = intentPlatform
         let page: [String: Any] = [
-            "intent": ["id": String(listing.trackId), "storefront": country],
+            "intent": intent,
             "data": [
-                "lockup": ["adamId": String(listing.trackId), "bundleId": listing.bundleId ?? ""],
+                "lockup": ["adamId": String(listing.trackId), "bundleId": listing.bundleId ?? "",
+                           "buttonAction": ["purchaseConfiguration": ["appPlatforms": appPlatforms]]],
                 "titleOfferDisplayProperties": offer,
                 "shelfMapping": [
                     "information": ["items": [

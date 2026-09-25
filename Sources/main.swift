@@ -2,7 +2,8 @@ import Cocoa
 import SwiftUI
 import Carbon.HIToolbox
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation {
+@MainActor
+final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMenuItemValidation, NSMenuDelegate {
     private var statusItem: NSStatusItem!
     private var managerWindow: NSWindow?
     private var settingsWindow: NSWindow?
@@ -19,6 +20,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     private let library = AppLibrary.shared
     private let clipboardImports = ClipboardImportMonitor()
     private var hudMenuItem = NSMenuItem()
+    private let monitor = PriceMonitorStore.shared
+    private var statusMenuOpen = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         library.additionalApps = { ManualImportStore.shared.entries }
@@ -27,6 +30,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         NSApp.appearance = preferences.appearance.nativeAppearance
         setupStatusItem()
         setupApplicationMenu()
+        NotificationCenter.default.addObserver(self, selector: #selector(monitorChanged),
+                                               name: PriceMonitorStore.didChange, object: monitor)
+        monitor.start()
         NotificationCenter.default.addObserver(self, selector: #selector(preferencesChanged),
                                                name: AppPreferences.didChange, object: preferences)
         NotificationCenter.default.addObserver(self, selector: #selector(preferencesChanged),
@@ -45,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        monitor.stop()
         NotesStore.shared.flush()
         SuggestionStore.shared.flush()
         AppDetailsStore.shared.flush()
@@ -52,6 +59,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func applicationDidBecomeActive(_ notification: Notification) {
         clipboardImports.consider()
+        Task { await monitor.checkIfDue() }
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows visibleWindows: Bool) -> Bool {
@@ -70,12 +78,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         if statusItem == nil {
             statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         }
-        if let button = statusItem.button {
-            button.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: "AppNotes")
-            button.toolTip = "AppNotes · " + preferences.text("app.title")
+        updateStatusBadge()
+        if statusItem.menu == nil {
+            let menu = NSMenu()
+            menu.delegate = self
+            statusItem.menu = menu
         }
+        if !statusMenuOpen, let menu = statusItem.menu { populateStatusMenu(menu) }
+    }
 
-        let menu = NSMenu()
+    private func updateStatusBadge() {
+        let count = monitor.unreadCount
+        statusItem.length = count == 0 ? NSStatusItem.squareLength : NSStatusItem.variableLength
+        if let button = statusItem.button {
+            button.image = NSImage(systemSymbolName: "note.text", accessibilityDescription: nil)
+            button.imagePosition = .imageLeading
+            button.title = count == 0 ? "" : " " + (count > 99 ? "99+" : String(count))
+            button.font = .monospacedDigitSystemFont(ofSize: 12, weight: .medium)
+            let label = preferences.text("monitor.menu.unread", count)
+            button.toolTip = "AppNotes · " + label
+            button.setAccessibilityLabel("AppNotes · " + label)
+        }
+    }
+
+    @objc private func monitorChanged() { updateStatusBadge() }
+
+    func menuWillOpen(_ menu: NSMenu) {
+        guard menu === statusItem.menu else { return }
+        statusMenuOpen = true
+        populateStatusMenu(menu)
+    }
+
+    func menuDidClose(_ menu: NSMenu) {
+        if menu === statusItem.menu { statusMenuOpen = false }
+    }
+
+    private func populateStatusMenu(_ menu: NSMenu) {
+        menu.removeAllItems()
+        let summary = NSMenuItem(title: preferences.text("monitor.menu.unread", monitor.unreadCount), action: nil, keyEquivalent: "")
+        menu.addItem(summary)
+        for event in monitor.sortedEvents.filter({ $0.isUnread }).prefix(3) {
+            let product = event.kind == .inAppPurchase ? " · " + event.productName : ""
+            let title = preferences.text(event.kind.titleKey) + " · " + event.app.name + product + " — " + preferences.text(event.statusKey())
+            let item = NSMenuItem(title: title, action: #selector(openPriceReminder(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = event.id.uuidString
+            item.image = NSImage(systemSymbolName: event.kind.symbol, accessibilityDescription: nil)
+            item.toolTip = title
+            menu.addItem(item)
+        }
+        menu.addItem(menuItem("monitor.menu.all", action: #selector(openPriceReminders)))
+        menu.addItem(menuItem("monitor.watches", action: #selector(openPriceWatches)))
+        menu.addItem(menuItem(monitor.isChecking ? "monitor.check.running" : "monitor.check", action: #selector(checkPrices)))
+        menu.addItem(.separator())
         menu.addItem(menuItem("menu.manager", action: #selector(openManager)))
         let searchItem = menuItem("menu.search", action: #selector(showSearchAction), key: "n")
         searchItem.keyEquivalentModifierMask = [.control, .option]
@@ -90,8 +145,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         menu.addItem(menuItem("settings.open", action: #selector(openSettings), key: ","))
         menu.addItem(.separator())
         menu.addItem(menuItem("menu.quit", action: #selector(quit), key: "q"))
-        statusItem.menu = menu
     }
+
+    @objc private func openPriceReminder(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let id = UUID(uuidString: raw) else { return }
+        MonitorNavigation.shared.showReminders(id)
+        openManager()
+    }
+
+    @objc private func openPriceReminders() {
+        MonitorNavigation.shared.showReminders()
+        openManager()
+    }
+
+    @objc private func openPriceWatches() {
+        MonitorNavigation.shared.showWatches()
+        openManager()
+    }
+
+    @objc private func checkPrices() { Task { await monitor.refresh(force: true) } }
 
     private func menuItem(_ key: String, action: Selector, key equivalent: String = "") -> NSMenuItem {
         let item = NSMenuItem(title: preferences.text(key), action: action, keyEquivalent: equivalent)
@@ -101,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
 
     func validateMenuItem(_ menuItem: NSMenuItem) -> Bool {
         switch menuItem.action {
+        case #selector(checkPrices): return !monitor.isChecking && monitor.writable && monitor.state.watches.contains(where: \.isEnabled)
         case #selector(rescan): return !library.isScanning
         case #selector(fetchDescriptions):
             return !library.isScanning && !library.apps.isEmpty && !FetchProgress.shared.isRunning
@@ -214,7 +287,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
                                   styleMask: [.titled, .closable], backing: .buffered, defer: false)
             window.title = preferences.text("settings.title")
             window.titlebarAppearsTransparent = true
-            window.contentViewController = NSHostingController(rootView: AppRoot { SettingsView() })
+            window.contentViewController = NSHostingController(rootView: AppRoot {
+                SettingsView(onManageWatches: { [weak self] in self?.openPriceWatches() })
+            })
             window.isReleasedWhenClosed = false
             window.delegate = self
             window.center()
@@ -410,7 +485,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, NSMe
         }
 
         hudTimer = Timer.scheduledTimer(withTimeInterval: 5.0, repeats: false) { [weak self] _ in
-            self?.dismissHUD(generation: generation)
+            Task { @MainActor in self?.dismissHUD(generation: generation) }
         }
     }
 
@@ -510,7 +585,10 @@ final class FloatingPanel: NSPanel {
     }
 }
 
-let delegate = AppDelegate()
-let application = NSApplication.shared
-application.delegate = delegate
-application.run()
+// main.swift starts on the process main thread; AppKit owns this run loop.
+MainActor.assumeIsolated {
+    let delegate = AppDelegate()
+    let application = NSApplication.shared
+    application.delegate = delegate
+    withExtendedLifetime(delegate) { application.run() }
+}

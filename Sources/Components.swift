@@ -44,21 +44,23 @@ struct AppIcon: View {
     }
 
     @ViewBuilder private var artwork: some View {
-        if app.origin == .manual, let url = URL.web(app.artworkURL) {
-            AsyncImage(url: url) { phase in
-                switch phase {
-                case .success(let image):
-                    image.resizable().interpolation(.high)
-                default:
-                    Image(systemName: "app.fill")
-                        .font(.system(size: size * 0.62))
-                        .foregroundStyle(.secondary)
-                        .frame(width: size, height: size)
+        if app.origin == .manual {
+            if let url = URL.web(app.artworkURL) {
+                AsyncImage(url: url) { phase in
+                    if case .success(let image) = phase { image.resizable().interpolation(.high) }
+                    else { placeholder }
                 }
-            }
+            } else { placeholder }
         } else {
             Image(nsImage: IconCache.icon(for: app.path)).resizable().interpolation(.high)
         }
+    }
+
+    private var placeholder: some View {
+        Image(systemName: "app.fill")
+            .font(.system(size: size * 0.62))
+            .foregroundStyle(.secondary)
+            .frame(width: size, height: size)
     }
 }
 
@@ -187,7 +189,9 @@ struct EmptyState: View {
                 .foregroundStyle(.tertiary).padding(.bottom, 4)
             Text(title).font(compact ? .headline : .title2.weight(.semibold))
             Text(message).font(.callout).foregroundStyle(.secondary)
-                .multilineTextAlignment(.center).fixedSize(horizontal: false, vertical: true)
+                // Respect the proposed height: fixedSize(vertical: true) can inflate
+                // NavigationSplitView's minimum height during narrow-width measurement.
+                .multilineTextAlignment(.center)
                 .frame(maxWidth: 310)
         }
         .padding(compact ? 8 : 32)

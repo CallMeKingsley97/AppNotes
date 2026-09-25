@@ -55,12 +55,19 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         try FileManager.default.createDirectory(at: dataDirectory, withIntermediateDirectories: true)
         let preferences = AppPreferences(defaults: ReviewDefaults(suiteName: "AppNotes.UIReview")!)
         let appearanceStates = Dictionary(uniqueKeysWithValues:
-            ["manager", "settings", "search", "hud", "suggestion"].map { ($0, AppearanceState()) })
+            ["manager", "settings", "search", "hud", "suggestion", "reminders", "watches"].map { ($0, AppearanceState()) })
         let notes = NotesStore(directory: dataDirectory)
         let suggestions = SuggestionStore(directory: dataDirectory)
         let detailsStore = AppDetailsStore(directory: dataDirectory, loader: FixtureDetailsLoader())
         let categories = CustomCategoryStore(directory: dataDirectory)
         let imports = ManualImportStore(directory: dataDirectory)
+        let priceFixture = PriceFixtures.state()
+        try JSONEncoder().encode(priceFixture).write(to: dataDirectory.appendingPathComponent("price-monitoring.json"))
+        let monitor = PriceMonitorStore(directory: dataDirectory, loader: FixturePriceLoader())
+        let reminderNavigation = MonitorNavigation()
+        reminderNavigation.showReminders()
+        let watchNavigation = MonitorNavigation()
+        watchNavigation.showWatches(priceFixture.watches[0].id)
         let network = categories.create(name: "翻墙")!
         _ = categories.create(name: "设计与创作")
         let apps = [
@@ -88,11 +95,11 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         let windows: [(String, NSWindow)] = [
             ("manager", window(AppRoot(preferences: preferences) {
                 ManagerView(store: notes, suggestionStore: suggestions, library: library, detailsStore: detailsStore, categoryStore: categories,
-                            imports: imports, onSettings: {}, onSearch: {})
+                            imports: imports, monitor: monitor, monitorNavigation: MonitorNavigation(), onSettings: {}, onSearch: {})
                     .background(AppearanceProbe(state: appearanceStates["manager"]!))
-            }, size: NSSize(width: 1080, height: 700))),
+            }, size: NSSize(width: 1080, height: 700), manager: true)),
             ("settings", window(AppRoot(preferences: preferences) {
-                SettingsView().background(AppearanceProbe(state: appearanceStates["settings"]!))
+                SettingsView(monitor: monitor).background(AppearanceProbe(state: appearanceStates["settings"]!))
             }, size: NSSize(width: 520, height: 620))),
             ("search", window(AppRoot(preferences: preferences) {
                 SearchOverlayView(store: notes, library: library, onClose: {})
@@ -103,14 +110,57 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                     .background(AppearanceProbe(state: appearanceStates["hud"]!))
             }, size: NSSize(width: 390, height: 120), useHostingView: true)),
             ("suggestion", window(AppRoot(preferences: preferences) {
-                DetailView(app: apps[1], store: notes, suggestionStore: suggestions, detailsStore: detailsStore, categoryStore: categories)
+                DetailView(app: apps[1], store: notes, suggestionStore: suggestions, detailsStore: detailsStore, categoryStore: categories, monitor: monitor)
                     .background(AppearanceProbe(state: appearanceStates["suggestion"]!))
-            }, size: NSSize(width: 430, height: 780)))
+            }, size: NSSize(width: 430, height: 780))),
+            ("reminders", window(AppRoot(preferences: preferences) {
+                ManagerView(store: notes, suggestionStore: suggestions, library: library, detailsStore: detailsStore,
+                            categoryStore: categories, imports: imports, monitor: monitor, monitorNavigation: reminderNavigation,
+                            onSettings: {}, onSearch: {})
+                    .background(AppearanceProbe(state: appearanceStates["reminders"]!))
+            }, size: NSSize(width: 1080, height: 700), manager: true)),
+            ("watches", window(AppRoot(preferences: preferences) {
+                ManagerView(store: notes, suggestionStore: suggestions, library: library, detailsStore: detailsStore,
+                            categoryStore: categories, imports: imports, monitor: monitor, monitorNavigation: watchNavigation,
+                            onSettings: {}, onSearch: {})
+                    .background(AppearanceProbe(state: appearanceStates["watches"]!))
+            }, size: NSSize(width: 880, height: 580), manager: true))
         ]
         // Reuse these windows through every switch to exercise live observation, not just initial rendering.
         NSApp.activate(ignoringOtherApps: true)
         if !CommandLine.arguments.contains("--appearance-only") {
+            let emptyMonitor = PriceMonitorStore(directory: dataDirectory.appendingPathComponent("empty"), loader: FixturePriceLoader())
+            for language in [AppLanguage.english, .chinese] {
+                preferences.language = language
+                for appearance in [AppAppearance.dark, .light] {
+                    preferences.appearance = appearance
+                    NSApp.appearance = appearance.nativeAppearance
+                    for size in [NSSize(width: 1080, height: 700), NSSize(width: 880, height: 580)] {
+                        for (name, fixture) in [("populated", monitor), ("empty", emptyMonitor)] {
+                            let layoutWindow = window(AppRoot(preferences: preferences) {
+                                ManagerView(store: notes, suggestionStore: suggestions, library: library, detailsStore: detailsStore,
+                                            categoryStore: categories, imports: imports, monitor: fixture,
+                                            monitorNavigation: MonitorNavigation(), onSettings: {}, onSearch: {})
+                            }, size: size, manager: true)
+                            let scenario = "\(name)-\(language.rawValue)-\(appearance.rawValue)-\(Int(size.width))"
+                            try await verifyWindowLayout(window: layoutWindow, scenario: scenario,
+                                                         populated: name == "populated", output: output)
+                            layoutWindow.close()
+                        }
+                    }
+                }
+            }
+            // Layout clicks select fixture events; restore unread state for the behavioral checks below.
+            await monitor.markRead(Set(priceFixture.events.filter(\.isUnread).map(\.id)), read: false)
+            if CommandLine.arguments.contains("--window-layout-only") { return }
+        }
+        if !CommandLine.arguments.contains("--appearance-only") {
             try await verifyCategoryFlow(window: windows[0].1, store: categories, apps: apps)
+        }
+        if !CommandLine.arguments.contains("--appearance-only") {
+            try await verifyMonitorFlow(window: windows.first { $0.0 == "reminders" }!.1,
+                                        monitor: monitor, navigation: reminderNavigation)
+            try await verifyWatchEditor(window: windows.first { $0.0 == "watches" }!.1, monitor: monitor)
         }
         let languages: [AppLanguage] = CommandLine.arguments.contains("--appearance-only") ? [] : [.chinese, .english]
         for language in languages {
@@ -131,6 +181,9 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                 }
                 let fixture = try DetailsFixtures.details(language: language.resolvedIdentifier())
                 let cardWindows: [(String, NSWindow)] = [
+                    ("watch-editor", window(AppRoot(preferences: preferences) {
+                        PriceWatchEditor(monitor: monitor, existing: priceFixture.watches[0])
+                    }, size: NSSize(width: 578, height: 550))),
                     ("category-editor", window(AppRoot(preferences: preferences) {
                         CategoryEditor(store: categories, including: apps[3])
                     }, size: NSSize(width: 420, height: 250))),
@@ -203,14 +256,14 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
                                    transition: "system-restored", output: output)
         let reopenedState = AppearanceState()
         let reopenedWindow = window(AppRoot(preferences: preferences) {
-            SettingsView().background(AppearanceProbe(state: reopenedState))
+            SettingsView(monitor: monitor).background(AppearanceProbe(state: reopenedState))
         }, size: NSSize(width: 520, height: 620))
         try await verifyAppearance(systemAppearance, windows: [("settings", reopenedWindow)],
                                    states: ["settings": reopenedState], transition: "system-reopened", output: output)
         precondition(notes.note(for: apps[0].path) == originalNote)
         precondition(NotesStore(directory: dataDirectory).note(for: apps[0].path) == originalNote)
         precondition(CustomCategoryStore(directory: dataDirectory).apps(in: network, from: library.apps).count == 2)
-        print("Passed: \(languages.count * 20) bilingual renders including categories, information, purchases, and unavailable states; 36 native/SwiftUI appearance checks covering manual → system, inherited changes, and reopened settings; persisted notes and categories unchanged.")
+        print("Passed: bilingual light/dark renders including free offers, watches at minimum width and watch editor; native/SwiftUI appearance checks, persisted notes and categories unchanged.")
         print("Review images: \(output.path)")
     }
 
@@ -237,6 +290,152 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
             }
             window.orderOut(nil)
         }
+    }
+
+    @MainActor private func verifyWindowLayout(window: NSWindow, scenario: String, populated: Bool, output: URL) async throws {
+        window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(250))
+        guard let outline = nativeViews(in: window.contentView!, as: NSOutlineView.self).first else {
+            throw AppearanceFailure(description: "Manager sidebar missing")
+        }
+        // Fixture sidebar: Library (0), All (1), Noted (2), Sources (3…7), Monitoring (8…10).
+        for (name, row) in [("all", 1), ("offers", 9), ("watches", 10), ("all-again", 1), ("offers-again", 9), ("watches-again", 10)] {
+            outline.scrollRowToVisible(row)
+            clickRow(outline, row: row, x: 80)
+            try await Task.sleep(for: .milliseconds(250))
+            guard outline.selectedRow == row else {
+                throw AppearanceFailure(description: "\(scenario), \(name): sidebar click did not select the requested page")
+            }
+            try verifyContentBounds(window, context: "\(scenario)-\(name)")
+            if name == "offers" || name == "watches" {
+                // Capture the real title bar and traffic lights, not only the hosting view.
+                let frame = window.contentView!.superview!
+                let image = frame.bitmapImageRepForCachingDisplay(in: frame.bounds)!
+                frame.cacheDisplay(in: frame.bounds, to: image)
+                try image.representation(using: .png, properties: [:])!.write(
+                    to: output.appendingPathComponent("window-layout-\(scenario)-\(name).png"))
+            }
+            if populated && name.hasSuffix("-again") && row != 1 {
+                let split = nativeViews(in: window.contentView!, as: NSSplitView.self).first!
+                let table = nativeViews(in: split.arrangedSubviews[1], as: NSTableView.self).first!
+                guard table.numberOfRows > 0 else { throw AppearanceFailure(description: "\(scenario): missing fixture rows") }
+                clickRow(table, row: 0, x: 80)
+                try await Task.sleep(for: .milliseconds(250))
+                guard table.selectedRow == 0 else { throw AppearanceFailure(description: "\(scenario): detail was not selected") }
+                try verifyContentBounds(window, context: "\(scenario)-\(name)-selected")
+            }
+        }
+        // Resize the same live hierarchy while the watching page (and, if populated, its detail) is open.
+        let originalSize = window.contentView!.bounds.size
+        let otherSize = originalSize.width > 1000 ? NSSize(width: 880, height: 580) : NSSize(width: 1080, height: 700)
+        for size in [otherSize, originalSize] {
+            window.setContentSize(size)
+            try await Task.sleep(for: .milliseconds(250))
+            try verifyContentBounds(window, context: "\(scenario)-resized-\(Int(size.width))")
+        }
+        print("Passed window layout: \(scenario); sidebar switching, details and live resizing.")
+    }
+
+    @MainActor private func verifyContentBounds(_ window: NSWindow, context: String) throws {
+        let content = window.contentView!
+        content.layoutSubtreeIfNeeded()
+        guard let split = nativeViews(in: content, as: NSSplitView.self).first,
+              split.arrangedSubviews.count == 3,
+              let field = nativeViews(in: split.arrangedSubviews[1], as: NSTextField.self).first(where: \.isEditable) else {
+            throw AppearanceFailure(description: "\(context): missing three-column layout or search field")
+        }
+        let splitRect = split.convert(split.bounds, to: content)
+        guard splitRect.minY >= content.bounds.minY - 1, splitRect.maxY <= content.bounds.maxY + 1 else {
+            throw AppearanceFailure(description: "\(context): split view exceeds window bounds: \(splitRect), content: \(content.bounds)")
+        }
+        // A search field sits below the page title. Checking it against AppKit's actual
+        // content layout rect catches headers pushed into the title bar after a route change.
+        let fieldRect = field.convert(field.bounds, to: nil)
+        let gap = window.contentLayoutRect.maxY - fieldRect.maxY
+        guard gap >= 30, fieldRect.minY >= window.contentLayoutRect.minY else {
+            throw AppearanceFailure(description: "\(context): search/header overlaps the title bar; gap=\(gap)")
+        }
+    }
+
+    @MainActor private func verifyMonitorFlow(window: NSWindow, monitor: PriceMonitorStore, navigation: MonitorNavigation) async throws {
+        let unread = monitor.unreadCount
+        window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(350))
+        precondition(monitor.unreadCount == unread, "Opening reminders must not automatically read the first event")
+        let event = monitor.state.events.first { $0.kind == .inAppPurchase }!
+        let initialSplit = nativeViews(in: window.contentView!, as: NSSplitView.self).first!
+        guard let search = nativeViews(in: initialSplit.arrangedSubviews[1], as: NSTextField.self).first(where: \.isEditable) else {
+            throw AppearanceFailure(description: "Reminder search field was not rendered")
+        }
+        window.makeFirstResponder(search)
+        search.currentEditor()?.insertText("no-matching-offer")
+        try await Task.sleep(for: .milliseconds(200))
+        navigation.showReminders(event.id)
+        try await Task.sleep(for: .milliseconds(350))
+        precondition(monitor.unreadCount == unread - 1, "Menu deep link must read only the selected event")
+        await monitor.markRead([event.id], read: false)
+        try await Task.sleep(for: .milliseconds(150))
+        precondition(monitor.unreadCount == unread, "Mark unread must remain unread while selected")
+        guard let split = nativeViews(in: window.contentView!, as: NSSplitView.self).first,
+              split.arrangedSubviews.count == 3,
+              let table = nativeViews(in: split.arrangedSubviews[1], as: NSTableView.self).first,
+              table.numberOfRows == monitor.state.events.count else {
+            throw AppearanceFailure(description: "Menu route must clear old search filters and render all app and IAP offers")
+        }
+        window.orderOut(nil)
+        print("Passed: reminders open without reading all offers; menu route reads only its target; explicit unread state remains stable.")
+    }
+
+    @MainActor private func verifyWatchEditor(window: NSWindow, monitor: PriceMonitorStore) async throws {
+        window.makeKeyAndOrderFront(nil)
+        try await Task.sleep(for: .milliseconds(250))
+        guard let split = nativeViews(in: window.contentView!, as: NSSplitView.self).first,
+              let add = nativeViews(in: split.arrangedSubviews[1], as: NSButton.self)
+                .max(by: { $0.convert($0.bounds, to: nil).midY < $1.convert($1.bounds, to: nil).midY }) else {
+            throw AppearanceFailure(description: "Add watch button was not available")
+        }
+        add.performClick(nil)
+        try await Task.sleep(for: .milliseconds(250))
+        guard let sheet = window.sheets.first,
+              let field = nativeViews(in: sheet.contentView!, as: NSTextField.self).first(where: \.isEditable) else {
+            throw AppearanceFailure(description: "Add watch sheet did not open")
+        }
+        sheet.makeFirstResponder(field)
+        field.currentEditor()?.insertText("https://apps.apple.com/cn/app/id123456789")
+        try await Task.sleep(for: .milliseconds(200))
+        // SwiftUI identifiers live on drawing nodes, not necessarily the native NSButton.
+        // The verification and save actions occupy the upper/lower trailing corners.
+        func trailingControls() -> [NSButton] {
+            nativeViews(in: sheet.contentView!, as: NSButton.self).filter {
+                $0.convert($0.bounds, to: nil).midX > sheet.contentView!.bounds.width * 0.65
+            }
+        }
+        func saveControl() -> NSButton? {
+            trailingControls().min {
+                let left = $0.convert($0.bounds, to: nil)
+                let right = $1.convert($1.bounds, to: nil)
+                return abs(left.midY - right.midY) < 2 ? left.midX > right.midX : left.midY < right.midY
+            }
+        }
+        guard let lookup = trailingControls().max(by: { $0.convert($0.bounds, to: nil).midY < $1.convert($1.bounds, to: nil).midY }),
+              let save = saveControl() else {
+            throw AppearanceFailure(description: "Watch verification controls were not available")
+        }
+        precondition(!save.isEnabled, "Cannot save before verifying the app")
+        lookup.performClick(nil)
+        try await Task.sleep(for: .milliseconds(250))
+        let verifiedSave = saveControl()!
+        precondition(verifiedSave.isEnabled, "Verified fixture should enable follow")
+        verifiedSave.performClick(nil)
+        try await Task.sleep(for: .milliseconds(300))
+        guard window.sheets.isEmpty,
+              let watch = monitor.state.watches.first(where: { $0.app.storeID == 123456789 }),
+              watch.watchesApplication && watch.watchesPurchases else {
+            throw AppearanceFailure(description: "Verified app was not saved with both watch scopes")
+        }
+        await monitor.remove(watchID: watch.id)
+        window.orderOut(nil)
+        print("Passed: native watch sheet verifies an app with an offline fixture, saves both scopes and dismisses.")
     }
 
     @MainActor private func verifyCategoryFlow(window: NSWindow, store: CustomCategoryStore, apps: [AppEntry]) async throws {
@@ -319,14 +518,22 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
         window.sendEvent(event)
     }
 
-    @MainActor private func window<Content: View>(_ content: Content, size: NSSize, useHostingView: Bool = false) -> NSWindow {
+    @MainActor private func window<Content: View>(_ content: Content, size: NSSize, useHostingView: Bool = false, manager: Bool = false) -> NSWindow {
+        // Match AppDelegate.openManager(), including the full-size title bar and unified toolbar.
         let window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
-                              styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+                              styleMask: manager ? [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView] : [.titled, .closable, .resizable],
+                              backing: .buffered, defer: false)
+        if manager {
+            window.titlebarAppearsTransparent = true
+            window.toolbarStyle = .unified
+            window.titleVisibility = .hidden
+        }
         if useHostingView {
             window.contentView = NSHostingView(rootView: content)
         } else {
             window.contentViewController = NSHostingController(rootView: content)
         }
+        if manager { window.titleVisibility = .hidden }
         window.setContentSize(size)
         window.isReleasedWhenClosed = false
         window.center()

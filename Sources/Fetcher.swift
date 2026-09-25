@@ -227,7 +227,7 @@ final class DescriptionFetcher {
     private func appStoreData(from url: URL) async -> Data? {
         for attempt in 0..<2 {
             do {
-                let (data, response) = try await session.data(from: url)
+                let (data, response) = try await AppleRequestQueue.shared.data(from: url, session: session)
                 if let http = response as? HTTPURLResponse, http.statusCode == 403 {
                     try? await Task.sleep(nanoseconds: 2_000_000_000)
                     continue

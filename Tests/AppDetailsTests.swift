@@ -80,7 +80,7 @@ struct AppDetailsTests {
         }
         let config = URLSessionConfiguration.ephemeral
         config.protocolClasses = [StubURLProtocol.self]
-        let client = AppStoreDetailsClient(session: URLSession(configuration: config))
+        let client = AppStoreDetailsClient(session: URLSession(configuration: config), requestQueue: AppleRequestQueue(spacing: 0))
         let lookupData = try JSONEncoder().encode(["results": [listing]])
         let htmlData = Data(try DetailsFixtures.pageHTML(listing: listing).utf8)
         StubURLProtocol.handler = { request in

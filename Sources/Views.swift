@@ -36,6 +36,11 @@ struct ManagerView: View {
     @ObservedObject var detailsStore = AppDetailsStore.shared
     @ObservedObject var categoryStore = CustomCategoryStore.shared
     @ObservedObject var imports = ManualImportStore.shared
+    @ObservedObject var monitor = PriceMonitorStore.shared
+    @ObservedObject var monitorNavigation = MonitorNavigation.shared
+    @State private var monitorRouteID = UUID()
+    @State private var eventSelection: UUID?
+    @State private var watchSelection: String?
     @State private var query = ""
     @State private var pendingSelection: String?
     @State private var selection: String?
@@ -47,6 +52,7 @@ struct ManagerView: View {
     let onSettings: () -> Void
     let onSearch: () -> Void
 
+    private var isMonitorPage: Bool { filter?.hasPrefix("monitor:") == true }
     private var activeFilter: LibraryFilter? { LibraryFilter(rawValue: filter ?? "") }
     private var activeCustomCategory: CustomAppCategory? {
         guard let filter, filter.hasPrefix("custom:") else { return nil }
@@ -62,18 +68,28 @@ struct ManagerView: View {
     }
     private var selectedApp: AppEntry? { library.apps.first { $0.id == selection } }
 
-    var body: some View {
+    private var navigation: some View {
         NavigationSplitView {
             sidebar
                 .navigationSplitViewColumnWidth(min: 180, ideal: 195, max: 240)
         } content: {
-            appList
-                .navigationSplitViewColumnWidth(min: 250, ideal: 290, max: 380)
+            Group {
+                if filter == "monitor:reminders" {
+                    PriceReminderList(monitor: monitor, selection: $eventSelection).id(monitorRouteID)
+                } else if filter == "monitor:watches" {
+                    PriceWatchList(monitor: monitor, selection: $watchSelection).id(monitorRouteID)
+                } else { appList }
+            }
+            .navigationSplitViewColumnWidth(min: 250, ideal: 300, max: 380)
         } detail: {
             Group {
-                if let app = selectedApp {
+                if filter == "monitor:reminders" {
+                    PriceReminderDetail(monitor: monitor, eventID: eventSelection)
+                } else if filter == "monitor:watches" {
+                    PriceWatchDetail(monitor: monitor, watchID: watchSelection)
+                } else if let app = selectedApp {
                     DetailView(app: app, store: store, suggestionStore: suggestionStore, detailsStore: detailsStore,
-                               categoryStore: categoryStore, imports: imports, library: library,
+                               categoryStore: categoryStore, imports: imports, library: library, monitor: monitor,
                                onCreateCategory: { beginNewCategory(including: app) })
                         .id(app.id)
                         .transition(.opacity)
@@ -88,6 +104,10 @@ struct ManagerView: View {
             .animation(Motion.content(reduced: reduceMotion), value: selectedApp?.id)
             .navigationSplitViewColumnWidth(min: 380, ideal: 520)
         }
+    }
+
+    var body: some View {
+        navigation
         .navigationSplitViewStyle(.balanced)
         .toolbar(removing: .title)
         .toolbar {
@@ -105,6 +125,7 @@ struct ManagerView: View {
         .frame(minWidth: 880, minHeight: 580)
         .onAppear {
             library.scanIfNeeded()
+            consumeMonitorNavigation()
             if imports.focusPath == nil {
                 var transaction = Transaction()
                 transaction.disablesAnimations = true
@@ -113,12 +134,14 @@ struct ManagerView: View {
                 consumeImportFocus()
             }
         }
+        .onChange(of: monitorNavigation.request) { _, _ in consumeMonitorNavigation() }
         .onChange(of: imports.focusPath) { _, path in
             guard path != nil else { return }
             consumeImportFocus()
         }
         .onChange(of: filter) { _, _ in
             query = ""
+            guard !isMonitorPage else { return }
             if let pendingSelection, filtered.contains(where: { $0.id == pendingSelection }) {
                 selection = pendingSelection
                 self.pendingSelection = nil
@@ -131,7 +154,7 @@ struct ManagerView: View {
         .onChange(of: library.apps) { _, _ in reconcileSelection() }
         .onChange(of: categoryStore.memberships) { _, _ in reconcileSelection() }
         .onChange(of: categoryStore.categories) { _, _ in
-            if activeFilter == nil && activeCustomCategory == nil { filter = LibraryFilter.all.rawValue }
+            if !isMonitorPage && activeFilter == nil && activeCustomCategory == nil { filter = LibraryFilter.all.rawValue }
             reconcileSelection()
         }
         .sheet(isPresented: $showingNewCategory) {
@@ -173,6 +196,26 @@ struct ManagerView: View {
                     filterRow(.appStore)
                     filterRow(.downloaded)
                     filterRow(.manual)
+                }
+                Section(preferences.text("monitor.title")) {
+                    HStack {
+                        Label { Text(preferences.text("monitor.reminders")) } icon: {
+                            Image(systemName: "bell").foregroundStyle(filter == "monitor:reminders" ? Color.primary : Color.accentColor)
+                        }
+                        Spacer(minLength: 4)
+                        if monitor.unreadCount > 0 {
+                            Text(monitor.unreadCount, format: .number).font(.caption).monospacedDigit()
+                        }
+                    }.padding(.vertical, 3).tag("monitor:reminders")
+                        .accessibilityIdentifier("monitor.reminders")
+                    HStack {
+                        Label { Text(preferences.text("monitor.watches")) } icon: {
+                            Image(systemName: "heart").foregroundStyle(filter == "monitor:watches" ? Color.primary : Color.accentColor)
+                        }
+                        Spacer(minLength: 4)
+                        Text(monitor.state.watches.count, format: .number).font(.caption).foregroundStyle(.secondary)
+                    }.padding(.vertical, 3).tag("monitor:watches")
+                        .accessibilityIdentifier("monitor.watches")
                 }
                 Section(preferences.text("category.title")) {
                     ForEach(categoryStore.categories) { category in customCategoryRow(category) }
@@ -356,8 +399,20 @@ struct ManagerView: View {
     }
 
     private func reconcileSelection() {
+        guard !isMonitorPage else { return }
         if let selection, filtered.contains(where: { $0.id == selection }) { return }
         selection = filtered.first?.id
+    }
+
+    private func consumeMonitorNavigation() {
+        guard let request = monitorNavigation.request else { return }
+        filter = request.page
+        monitorRouteID = request.id
+        eventSelection = request.eventID
+        watchSelection = request.watchID
+        if let id = request.eventID { Task { await monitor.markRead([id], read: true) } }
+        // Consume once so rebuilding a window does not replay an old menu selection.
+        monitorNavigation.request = nil
     }
 
     private func beginNewCategory(including app: AppEntry? = nil) {

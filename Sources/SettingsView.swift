@@ -2,6 +2,8 @@ import SwiftUI
 
 struct SettingsView: View {
     @EnvironmentObject private var preferences: AppPreferences
+    @ObservedObject var monitor = PriceMonitorStore.shared
+    var onManageWatches: () -> Void = {}
 
     var body: some View {
         VStack(spacing: 0) {
@@ -46,6 +48,18 @@ struct SettingsView: View {
                         .fixedSize(horizontal: false, vertical: true)
                 } header: {
                     Label(preferences.text("settings.language"), systemImage: "globe")
+                }
+                Section {
+                    Toggle(preferences.text("monitor.automatic"), isOn: Binding(
+                        get: { monitor.state.automaticChecks },
+                        set: { enabled in Task { await monitor.setAutomaticChecks(enabled) } }
+                    )).toggleStyle(.switch).disabled(!monitor.writable)
+                    Text(preferences.text("monitor.runtime"))
+                        .font(.caption).foregroundStyle(.secondary)
+                    Button(preferences.text("monitor.watches"), action: onManageWatches)
+                    MonitorFeedback(monitor: monitor)
+                } header: {
+                    Label(preferences.text("monitor.title"), systemImage: "bell")
                 }
                 Section {
                     Toggle(isOn: $preferences.hudEnabled) {

@@ -57,7 +57,7 @@ struct StorePageDetails: Codable, Equatable, Sendable {
     let releaseNotes: [AppReleaseNote]?
 
     // Only read the requested product's information shelf, not recommendations or marketing text.
-    static func parse(_ html: String, listing: StoreListing, country: String) throws -> StorePageDetails {
+    static func parse(_ html: String, listing: StoreListing, country: String, languagePrefix: String? = nil, platform: String? = nil, includeIncompletePurchases: Bool = false) throws -> StorePageDetails {
         let expression = try NSRegularExpression(
             pattern: #"<script\b[^>]*\bid\s*=\s*["']serialized-server-data["'][^>]*>([\s\S]*?)</script>"#,
             options: .caseInsensitive)
@@ -70,6 +70,8 @@ struct StorePageDetails: Codable, Equatable, Sendable {
                   let intent = $0["intent"] as? [String: Any]
                   return String(describing: intent?["id"] ?? "") == String(listing.trackId)
                       && intent?["storefront"] as? String == country
+                      && (languagePrefix == nil || (intent?["language"] as? String)?.hasPrefix(languagePrefix!) == true)
+                      && (platform == nil || Self.matchesPlatform($0, expected: platform!))
               })?["data"] as? [String: Any],
               let lockup = page["lockup"] as? [String: Any],
               String(describing: lockup["adamId"] ?? "") == String(listing.trackId),
@@ -88,9 +90,11 @@ struct StorePageDetails: Codable, Equatable, Sendable {
             let children = item["items"] as? [[String: Any]] ?? []
             if ["app内购买", "in-apppurchases"].contains(title) {
                 for child in children {
-                    for pair in child["textPairs"] as? [[String]] ?? [] where pair.count == 2 {
-                        if !pair[0].isEmpty && !pair[1].isEmpty {
-                            purchases.append(InAppPurchase(name: pair[0], price: pair[1]))
+                    for pair in child["textPairs"] as? [[String]] ?? [] {
+                        guard let name = pair.first, !name.isEmpty else { continue }
+                        let price = pair.count == 2 ? pair[1] : ""
+                        if includeIncompletePurchases || !price.isEmpty {
+                            purchases.append(InAppPurchase(name: name, price: price))
                         }
                     }
                 }
@@ -106,6 +110,18 @@ struct StorePageDetails: Codable, Equatable, Sendable {
                                 hasInAppPurchases: offer?["hasInAppPurchases"] as? Bool,
                                 requirements: requirements,
                                 releaseNotes: Self.releaseNotes(from: html))
+    }
+
+    private static func matchesPlatform(_ page: [String: Any], expected: String) -> Bool {
+        let intent = page["intent"] as? [String: Any]
+        if let platform = intent?["platform"] as? String { return platform == expected }
+        // Apple may omit the intent platform for single-platform apps. Only accept
+        // an unambiguous platform from this product's purchase configuration.
+        let data = page["data"] as? [String: Any]
+        let lockup = data?["lockup"] as? [String: Any]
+        let action = lockup?["buttonAction"] as? [String: Any]
+        let configuration = action?["purchaseConfiguration"] as? [String: Any]
+        return configuration?["appPlatforms"] as? [String] == [expected]
     }
 
     private static func releaseNotes(from html: String) -> [AppReleaseNote] {
@@ -177,8 +193,10 @@ protocol AppDetailsLoading: Sendable {
 
 actor AppStoreDetailsClient: AppDetailsLoading {
     private let session: URLSession
+    private let requestQueue: AppleRequestQueue
 
-    init(session: URLSession? = nil) {
+    init(session: URLSession? = nil, requestQueue: AppleRequestQueue = .shared) {
+        self.requestQueue = requestQueue
         if let session {
             self.session = session
         } else {
@@ -237,7 +255,7 @@ actor AppStoreDetailsClient: AppDetailsLoading {
     }
 
     private func response(from url: URL) async throws -> Data {
-        let (data, response) = try await session.data(from: url)
+        let (data, response) = try await requestQueue.data(from: url, session: session)
         guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode),
               data.count <= 5_000_000 else { throw AppDetailsError.invalidResponse }
         return data
