@@ -16,6 +16,19 @@ enum PriceClientError: Error {
 
 protocol PriceLoading: Sendable {
     func fetch(id: Int64, country: String, expectedBundle: String?) async throws -> PriceCheckResult
+    func fetch(_ request: PriceRequest) async throws -> PriceCheckResult
+    func lookup(_ requests: [PriceRequest]) async -> [String: Result<PriceCheckResult, PriceFetchFailure>]
+    func complete(_ request: PriceRequest, lookup: PriceCheckResult) async throws -> PriceCheckResult
+}
+
+extension PriceLoading {
+    func fetch(_ request: PriceRequest) async throws -> PriceCheckResult {
+        try await fetch(id: request.id, country: request.country, expectedBundle: request.expectedBundle)
+    }
+    func lookup(_ requests: [PriceRequest]) async -> [String: Result<PriceCheckResult, PriceFetchFailure>] { [:] }
+    func complete(_ request: PriceRequest, lookup: PriceCheckResult) async throws -> PriceCheckResult {
+        try await fetch(request)
+    }
 }
 
 struct AppStorePriceClient: PriceLoading {
@@ -32,53 +45,130 @@ struct AppStorePriceClient: PriceLoading {
     }
 
     func fetch(id: Int64, country: String, expectedBundle: String?) async throws -> PriceCheckResult {
-        guard id > 0, country.count == 2, country.allSatisfy({ $0.isASCII && $0.isLowercase }) else {
-            throw PriceClientError.invalidLink
+        try await fetch(PriceRequest(id: id, country: country, expectedBundle: expectedBundle))
+    }
+
+    func fetch(_ request: PriceRequest) async throws -> PriceCheckResult {
+        guard request.id > 0, Self.validCountry(request.country) else { throw PriceClientError.invalidLink }
+        let data = try await response(Self.lookupURL(ids: [request.id], country: request.country))
+        let listing = try Self.decodeListing(data, id: request.id, expectedBundle: request.expectedBundle)
+        return try await complete(request, lookup: Self.base(listing, country: request.country))
+    }
+
+    /// Small batches only. Missing IDs are retried individually; malformed/mismatched records are not adopted.
+    func lookup(_ requests: [PriceRequest]) async -> [String: Result<PriceCheckResult, PriceFetchFailure>] {
+        var results: [String: Result<PriceCheckResult, PriceFetchFailure>] = [:]
+        let groups = Dictionary(grouping: requests, by: \.country)
+        for country in groups.keys.sorted() {
+            let group = groups[country]!
+            for start in stride(from: 0, to: group.count, by: 10) {
+                let batch = Array(group[start..<min(start + 10, group.count)])
+                do {
+                    guard Self.validCountry(country), batch.allSatisfy({ $0.id > 0 }) else { throw PriceClientError.invalidLink }
+                    let data = try await response(Self.lookupURL(ids: batch.map(\.id), country: country))
+                    for request in batch {
+                        do {
+                            let listing = try Self.decodeListing(data, id: request.id, expectedBundle: request.expectedBundle)
+                            results[request.key] = .success(try Self.base(listing, country: country))
+                        } catch PriceClientError.notFound {
+                            // The store will perform a single-ID lookup when this entry reaches the front.
+                        } catch { results[request.key] = .failure(Self.failure(error)) }
+                    }
+                } catch {
+                    for request in batch { results[request.key] = .failure(Self.failure(error)) }
+                }
+            }
         }
-        var url = URLComponents(string: "https://itunes.apple.com/lookup")!
-        url.queryItems = [URLQueryItem(name: "id", value: String(id)), URLQueryItem(name: "country", value: country),
-                         URLQueryItem(name: "lang", value: country == "cn" ? "zh_cn" : "en_us")]
-        let data = try await response(url.url!)
-        let listing = try Self.decodeListing(data, id: id, expectedBundle: expectedBundle)
-        let app = WatchedApp(storeID: id, bundleID: listing.bundleId, name: listing.trackName,
-                             country: country, platform: listing.kind, artworkURL: listing.artworkUrl512 ?? listing.artworkUrl100)
-        let now = Date()
-        var quotes: [ProductQuote] = []
-        if let amount = listing.price, amount >= 0, let currency = listing.currency, Self.validCurrency(currency) {
-            quotes.append(ProductQuote(id: "app", kind: .application, name: app.name,
-                                       price: PriceQuote(amount: amount, currency: currency, observedAt: now)))
+        return results
+    }
+
+    func complete(_ request: PriceRequest, lookup: PriceCheckResult) async throws -> PriceCheckResult {
+        guard lookup.app.storeID == request.id, lookup.app.country == request.country,
+              request.expectedBundle == nil || lookup.app.bundleID == request.expectedBundle else {
+            throw PriceClientError.invalidIdentity
         }
-        var coverage = "monitor.coverage.unavailable"
-        var purchaseCount = 0
-        var purchaseSnapshot: PurchaseSnapshot?
+        var result = lookup
+        guard request.purchases else { return result }
+        let app = result.app
+        result.purchaseCoverageKey = "monitor.coverage.unavailable"
         do {
-            // The storefront's fixed language is part of name-based identity, not the UI language.
             let pageData = try await response(app.storeURL)
             try Task.checkCancellation()
-            let storeListing = try JSONDecoder().decode(StoreListing.self, from: JSONEncoder().encode(listing))
-            let page = try StorePageDetails.parse(String(decoding: pageData, as: UTF8.self), listing: storeListing, country: country,
-                                                  languagePrefix: app.purchaseLanguage, platform: listing.kind == "mac-software" ? "mac" : nil,
-                                                  includeIncompletePurchases: true)
-            purchaseSnapshot = PurchaseSnapshot(purchases: page.purchases, observedAt: Date())
-            if page.hasInAppPurchases == false {
-                coverage = "monitor.coverage.none"
-            } else if !page.purchases.isEmpty, let currency = listing.currency, Self.validCurrency(currency) {
-                var parsed = PublicPurchasePrices.quotes(from: page.purchases, currency: currency, observedAt: Date())
-                // Do not compare new Chinese names with legacy English baselines, even if a name is unchanged.
-                if app.purchaseLanguage != "en" {
-                    for index in parsed.indices { parsed[index].id = "iap:\(app.purchaseLanguage):name:\(parsed[index].name)" }
-                }
-                quotes += parsed
-                purchaseCount = parsed.count
-                coverage = parsed.count == page.purchases.count ? "monitor.coverage.public" : "monitor.coverage.partial"
+            guard let listing = result.listing else { throw PriceClientError.invalidIdentity }
+            let page = try StorePageDetails.parse(String(decoding: pageData, as: UTF8.self), listing: listing,
+                country: request.country, languagePrefix: app.purchaseLanguage,
+                platform: app.platform == "mac-software" ? "mac" : nil, includeIncompletePurchases: true,
+                diagnoseIdentity: true)
+            let now = Date()
+            let currency = listing.currency
+            // A declared IAP catalogue without a readable list is not evidence that all products disappeared.
+            guard !page.purchases.isEmpty || page.hasInAppPurchases == false else {
+                throw PriceFetchFailure(issue: .purchases)
+            }
+            result.purchaseSnapshot = PurchaseSnapshot(purchases: page.purchases, observedAt: now, currency: currency)
+            result.purchaseStatus = PriceSourceStatus(attemptedAt: now)
+            result.purchaseIdentityObserved = true
+            if page.purchases.isEmpty {
+                result.purchaseCoverageKey = "monitor.coverage.none"
+            } else {
+                let quotes = currency.map {
+                    PublicPurchasePrices.quotes(from: page.purchases, currency: $0, observedAt: now,
+                        language: app.purchaseLanguage)
+                } ?? []
+                result.quotes += quotes
+                result.purchaseCount = quotes.count
+                let allReadable = PublicPurchasePrices.assess(page.purchases, currency: currency)
+                    .allSatisfy { $0.comparison == .comparable }
+                result.purchaseCoverageKey = allReadable ? "monitor.coverage.public" : "monitor.coverage.partial"
             }
         } catch {
             try Task.checkCancellation()
-            // A valid download price remains usable when the public purchase shelf fails.
+            result.purchaseStatus = PriceSourceStatus(attemptedAt: Date(), failure: Self.failure(error))
+            result.purchaseIdentityObserved = false
         }
-        return PriceCheckResult(app: app, quotes: quotes, purchaseCoverageKey: coverage,
-                                purchaseCount: purchaseCount, applicationAvailable: quotes.contains { $0.kind == .application },
-                                purchaseSnapshot: purchaseSnapshot)
+        return result
+    }
+
+    static func failure(_ error: Error) -> PriceFetchFailure {
+        if let failure = error as? PriceFetchFailure { return failure }
+        switch error {
+        case PriceClientError.rateLimited(let date), AppleRequestError.rateLimited(let date):
+            return PriceFetchFailure(issue: .rate, retryAfter: date)
+        case PriceClientError.notFound: return PriceFetchFailure(issue: .region)
+        case PriceClientError.invalidIdentity: return PriceFetchFailure(issue: .identity)
+        case PriceClientError.invalidResponse, PriceClientError.invalidLink: return PriceFetchFailure(issue: .response)
+        case AppDetailsError.invalidPageIdentity: return PriceFetchFailure(issue: .pageIdentity)
+        case AppDetailsError.invalidPage: return PriceFetchFailure(issue: .pageFormat)
+        default: return PriceFetchFailure(issue: .network)
+        }
+    }
+
+    private static func validCountry(_ country: String) -> Bool {
+        country.count == 2 && country.allSatisfy { $0.isASCII && $0.isLowercase }
+    }
+
+    private static func lookupURL(ids: [Int64], country: String) -> URL {
+        var url = URLComponents(string: "https://itunes.apple.com/lookup")!
+        url.queryItems = [URLQueryItem(name: "id", value: ids.map(String.init).joined(separator: ",")),
+            URLQueryItem(name: "country", value: country),
+            URLQueryItem(name: "lang", value: country == "cn" ? "zh_cn" : "en_us")]
+        return url.url!
+    }
+
+    private static func base(_ listing: Listing, country: String) throws -> PriceCheckResult {
+        let app = WatchedApp(storeID: listing.trackId, bundleID: listing.bundleId, name: listing.trackName,
+            country: country, platform: listing.kind, artworkURL: listing.artworkUrl512 ?? listing.artworkUrl100)
+        let now = Date()
+        var quotes: [ProductQuote] = []
+        if let amount = listing.price, amount >= 0, let currency = listing.currency, validCurrency(currency) {
+            quotes.append(ProductQuote(id: "app", kind: .application, name: app.name,
+                price: PriceQuote(amount: amount, currency: currency, observedAt: now)))
+        }
+        return PriceCheckResult(app: app, quotes: quotes, purchaseCoverageKey: "monitor.coverage.pending",
+            purchaseCount: 0, applicationAvailable: !quotes.isEmpty,
+            applicationStatus: PriceSourceStatus(attemptedAt: now, failure: quotes.isEmpty ? PriceFetchFailure(issue: .price) : nil),
+            purchaseIdentityObserved: false,
+            listing: try JSONDecoder().decode(StoreListing.self, from: JSONEncoder().encode(listing)))
     }
 
     struct Listing: Codable {
@@ -94,9 +184,13 @@ struct AppStorePriceClient: PriceLoading {
     }
 
     static func decodeListing(_ data: Data, id: Int64, expectedBundle: String?) throws -> Listing {
-        struct Response: Decodable { var results: [Listing] }
-        guard let decoded = try? JSONDecoder().decode(Response.self, from: data) else { throw PriceClientError.invalidResponse }
-        guard let listing = decoded.results.first(where: { $0.trackId == id }) else { throw PriceClientError.notFound }
+        guard let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let records = root["results"] as? [[String: Any]] else { throw PriceClientError.invalidResponse }
+        let matching = records.filter { ($0["trackId"] as? NSNumber)?.int64Value == id }
+        guard !matching.isEmpty else { throw PriceClientError.notFound }
+        guard matching.count == 1 else { throw PriceClientError.invalidIdentity }
+        guard let encoded = try? JSONSerialization.data(withJSONObject: matching[0]),
+              let listing = try? JSONDecoder().decode(Listing.self, from: encoded) else { throw PriceClientError.invalidResponse }
         guard listing.wrapperType == "software", ["software", "mac-software"].contains(listing.kind),
               !listing.bundleId.isEmpty, !listing.trackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
               expectedBundle == nil || listing.bundleId == expectedBundle else { throw PriceClientError.invalidIdentity }
@@ -121,22 +215,35 @@ struct AppStorePriceClient: PriceLoading {
     }
 }
 
-/// Public shelves expose names, not StoreKit IDs. Only unique exact names may be compared.
-/// Removed, renamed, ambiguous or malformed entries break the baseline instead of implying free.
+/// Read explicit prices; same-name rows use the lowest listed price for zero-price detection.
 enum PublicPurchasePrices {
     static func nameKey(_ name: String) -> String {
         name.precomposedStringWithCanonicalMapping.split(whereSeparator: \.isWhitespace).joined(separator: " ")
     }
 
-    static func quotes(from purchases: [InAppPurchase], currency: String, observedAt: Date) -> [ProductQuote] {
-        let groups = Dictionary(grouping: purchases, by: { nameKey($0.name) })
-        return groups.keys.sorted().compactMap { name in
-            guard !name.isEmpty, let matches = groups[name], matches.count == 1,
-                  !name.lowercased().contains("trial"), !name.contains("试用"),
-                  let amount = amount(matches[0].price, currency: currency) else { return nil }
-            return ProductQuote(id: "iap:name:\(name)", kind: .inAppPurchase, name: name,
-                                price: PriceQuote(amount: amount, currency: currency, observedAt: observedAt))
+    static let supportedCurrencies: Set<String> = ["CNY", "USD", "JPY", "GBP", "EUR", "HKD", "TWD", "CAD", "AUD", "KRW", "SGD"]
+
+    static func assess(_ purchases: [InAppPurchase], currency: String?) -> [PurchaseAssessment] {
+        return purchases.map { purchase in
+            let name = nameKey(purchase.name)
+            let reason: PurchaseComparison
+            let value = currency.flatMap { amount(purchase.price, currency: $0) }
+            if name.isEmpty { reason = .invalidName }
+            else if currency.map({ supportedCurrencies.contains($0) }) != true { reason = .unsupportedCurrency }
+            else if value == nil { reason = .missingPrice }
+            else { reason = .comparable }
+            return PurchaseAssessment(purchase: purchase, name: name, comparison: reason, amount: value)
         }
+    }
+
+    static func quotes(from purchases: [InAppPurchase], currency: String, observedAt: Date,
+                       language: String = "en") -> [ProductQuote] {
+        let readable = assess(purchases, currency: currency).filter { $0.comparison == .comparable }
+        return Dictionary(grouping: readable, by: \.name).values.compactMap { items in
+            guard let item = items.min(by: { $0.amount! < $1.amount! }), let amount = item.amount else { return nil }
+            return ProductQuote(id: item.productID(language: language), kind: .inAppPurchase, name: item.name,
+                price: PriceQuote(amount: amount, currency: currency, observedAt: observedAt))
+        }.sorted { $0.name < $1.name }
     }
 
     static func amount(_ text: String, currency: String) -> Decimal? {

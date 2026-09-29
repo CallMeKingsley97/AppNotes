@@ -57,16 +57,16 @@ struct StorePageDetails: Codable, Equatable, Sendable {
     let releaseNotes: [AppReleaseNote]?
 
     // Only read the requested product's information shelf, not recommendations or marketing text.
-    static func parse(_ html: String, listing: StoreListing, country: String, languagePrefix: String? = nil, platform: String? = nil, includeIncompletePurchases: Bool = false) throws -> StorePageDetails {
+    static func parse(_ html: String, listing: StoreListing, country: String, languagePrefix: String? = nil, platform: String? = nil, includeIncompletePurchases: Bool = false, diagnoseIdentity: Bool = false) throws -> StorePageDetails {
         let expression = try NSRegularExpression(
             pattern: #"<script\b[^>]*\bid\s*=\s*["']serialized-server-data["'][^>]*>([\s\S]*?)</script>"#,
             options: .caseInsensitive)
         guard let match = expression.firstMatch(in: html, range: NSRange(html.startIndex..., in: html)),
               let range = Range(match.range(at: 1), in: html),
               let data = String(html[range]).data(using: .utf8),
-              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              let pages = root["data"] as? [[String: Any]],
-              let page = pages.first(where: {
+              let root = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let pages = root["data"] as? [[String: Any]] else { throw AppDetailsError.invalidPage }
+        guard let page = pages.first(where: {
                   let intent = $0["intent"] as? [String: Any]
                   return String(describing: intent?["id"] ?? "") == String(listing.trackId)
                       && intent?["storefront"] as? String == country
@@ -75,8 +75,10 @@ struct StorePageDetails: Codable, Equatable, Sendable {
               })?["data"] as? [String: Any],
               let lockup = page["lockup"] as? [String: Any],
               String(describing: lockup["adamId"] ?? "") == String(listing.trackId),
-              listing.bundleId == nil || lockup["bundleId"] as? String == listing.bundleId,
-              let shelves = page["shelfMapping"] as? [String: Any],
+              listing.bundleId == nil || lockup["bundleId"] as? String == listing.bundleId else {
+            throw diagnoseIdentity ? AppDetailsError.invalidPageIdentity : AppDetailsError.invalidPage
+        }
+        guard let shelves = page["shelfMapping"] as? [String: Any],
               let information = shelves["information"] as? [String: Any],
               let items = information["items"] as? [[String: Any]] else {
             throw AppDetailsError.invalidPage
@@ -184,7 +186,7 @@ struct AppDetails: Codable, Equatable, Sendable {
 }
 
 enum AppDetailsError: Error {
-    case noIdentity, notFound, invalidResponse, invalidPage
+    case noIdentity, notFound, invalidResponse, invalidPage, invalidPageIdentity
 }
 
 protocol AppDetailsLoading: Sendable {

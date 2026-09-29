@@ -60,7 +60,7 @@ struct PriceMonitoringTests {
                                                                   expectedBundle: "com.huagx.copyhistory")
             precondition(copyHistory.applicationAvailable && copyHistory.purchaseCount > 0)
             precondition(copyHistory.purchaseSnapshot?.purchases.count == 5)
-            precondition(copyHistory.purchaseCount == 3)
+            precondition(copyHistory.purchaseCount == 4)
             precondition(copyHistory.purchaseSnapshot?.purchases.contains { $0.name == "CopyHistory Pro 永久激活" && $0.price == "¥58.00" } == true)
             print("Live CopyHistory: \(copyHistory.purchaseCount) uniquely named purchases, coverage=\(copyHistory.purchaseCoverageKey)")
         }
@@ -77,13 +77,14 @@ struct PriceMonitoringTests {
         }
         apply(0, 0, 0)
         apply(200, 0, 0)
-        precondition(events.isEmpty, "Already-free apps must not notify")
+        precondition(events.count == 1 && events[0].kind == .inAppPurchase, "Zero IAP starts immediately on first observation")
         apply(400, 28, 68)
+        precondition(events[0].status == .ended, "A paid IAP ends the offer immediately")
         apply(600, 0, 0)
         apply(779, 0, 0)
-        precondition(events.isEmpty, "Confirmation must wait at least three minutes")
+        precondition(events.count == 2 && events.allSatisfy { $0.kind == .inAppPurchase }, "Only app prices need confirmation")
         apply(780, 0, 0)
-        precondition(events.count == 2 && Set(events.map(\.kind)).count == 2)
+        precondition(events.count == 3 && Set(events.map(\.kind)).count == 2)
         let firstIDs = events.map(\.id)
         apply(900, 0, 0)
         precondition(events.map(\.id) == firstIDs, "Continuous free period must not replay")
@@ -93,12 +94,12 @@ struct PriceMonitoringTests {
         precondition(events.first { $0.kind == .application }?.status == .ended)
         apply(1_300, 0, 0)
         apply(1_480, 0, 0)
-        precondition(events.count == 3, "Paid then free should create a new episode")
-        precondition(events.filter { $0.kind == .inAppPurchase }.count == 1)
+        precondition(events.count == 4, "Paid then free should create a new episode")
+        precondition(events.filter { $0.kind == .inAppPurchase }.count == 2)
         let saved = try! JSONDecoder().decode(PriceWatch.self, from: JSONEncoder().encode(watch))
         watch = saved
         apply(1_600, 0, 0)
-        precondition(events.count == 3, "Restart must retain episode IDs")
+        precondition(events.count == 4, "Restart must retain episode IDs")
         precondition(events.allSatisfy(\.isUnread), "Ended offers still count until read")
 
         var fresh = PriceWatch(app: PriceFixtures.app)
@@ -109,7 +110,8 @@ struct PriceMonitoringTests {
             let date = start.addingTimeInterval(seconds)
             PriceRules.apply(PriceFixtures.result(at: date, appPrice: 0, purchasePrice: 0), to: &fresh, events: &empty, now: date)
         }
-        precondition(empty.isEmpty, "Baseline older than seven days must not notify")
+        precondition(empty.count == 1 && empty[0].kind == .inAppPurchase, "IAP needs no recent baseline")
+        empty = []
         fresh = PriceWatch(app: PriceFixtures.app)
         PriceRules.apply(paid, to: &fresh, events: &empty, now: start)
         for seconds in [200.0, 2_100, 2_280] {
@@ -132,7 +134,7 @@ struct PriceMonitoringTests {
             changed.quotes[0].price.currency = "USD"
             PriceRules.apply(changed, to: &fresh, events: &empty, now: date)
         }
-        precondition(empty.isEmpty, "Currency change and missing IAP must reset baselines")
+        precondition(empty.count == 1 && empty[0].kind == .inAppPurchase, "Reappearing zero IAP starts immediately")
         let latest = fresh.products.map(\.latest)
         PriceRules.apply(paid, to: &fresh, events: &empty, now: start.addingTimeInterval(400))
         precondition(fresh.products.map(\.latest) == latest, "Old responses must not replace newer prices")
@@ -148,7 +150,7 @@ struct PriceMonitoringTests {
                        InAppPurchase(name: "Unknown", price: ""),
                        InAppPurchase(name: "Other", price: "$0.00")]
         let quotes = PublicPurchasePrices.quotes(from: entries, currency: "CNY", observedAt: date)
-        precondition(quotes.count == 1 && quotes[0].price.amount == 68)
+        precondition(quotes.count == 3 && quotes.filter { $0.price.amount == 0 }.count == 2)
         precondition(PublicPurchasePrices.amount("Free", currency: "USD") == 0)
         precondition(PublicPurchasePrices.amount("¥0.00", currency: "CNY") == 0)
         precondition(PublicPurchasePrices.amount("1.234,56 €", currency: "EUR") == Decimal(string: "1234.56"))
@@ -157,7 +159,7 @@ struct PriceMonitoringTests {
             precondition(PublicPurchasePrices.amount(text, currency: "CNY") == nil, text)
         }
         let names = [InAppPurchase(name: " Pro  Life ", price: "¥1"), InAppPurchase(name: "Pro Life", price: "¥0")]
-        precondition(PublicPurchasePrices.quotes(from: names, currency: "CNY", observedAt: date).isEmpty)
+        precondition(PublicPurchasePrices.quotes(from: names, currency: "CNY", observedAt: date).first?.price.amount == 0)
         precondition(PublicPurchasePrices.nameKey("Cafe\u{301}") == PublicPurchasePrices.nameKey("Café"))
     }
 
@@ -187,8 +189,8 @@ struct PriceMonitoringTests {
             return (200, Data(html.utf8))
         }
         let result = try await client.fetch(id: listing.trackId, country: "cn", expectedBundle: listing.bundleId)
-        precondition(result.applicationAvailable && result.purchaseCount == 2)
-        precondition(result.purchaseCoverageKey == "monitor.coverage.partial")
+        precondition(result.applicationAvailable && result.purchaseCount == 3)
+        precondition(result.purchaseCoverageKey == "monitor.coverage.public")
         precondition(result.purchaseSnapshot?.purchases.count == 4, "Display must retain duplicate names and prices")
         precondition(result.quotes.filter { $0.kind == .inAppPurchase }.allSatisfy { $0.id.hasPrefix("iap:zh-Hans:name:") },
                      "New Chinese identities must not reuse legacy English baselines")
@@ -202,7 +204,7 @@ struct PriceMonitoringTests {
         let legacyWatch = try JSONDecoder().decode(PriceWatch.self, from: JSONSerialization.data(withJSONObject: legacy))
         precondition(legacyWatch.purchaseSnapshot == nil, "Existing saved watches remain readable")
         for (intentPlatform, appPlatforms, expectedCount) in [
-            (nil as String?, ["mac"], 2),
+            (nil as String?, ["mac"], 3),
             (nil, ["iphone"], 0),
             (nil, ["mac", "iphone"], 0),
             (nil, [], 0),
@@ -231,23 +233,23 @@ struct PriceMonitoringTests {
         let malformed = html.replacingOccurrences(of: "¥28.00", with: "")
         let parsed = try StorePageDetails.parse(malformed, listing: listing, country: "cn", includeIncompletePurchases: true)
         precondition(parsed.purchases.count == 4)
-        precondition(PublicPurchasePrices.quotes(from: parsed.purchases, currency: "CNY", observedAt: Date()).count == 2,
-                     "A duplicate with a missing price is still ambiguous")
+        precondition(PublicPurchasePrices.quotes(from: parsed.purchases, currency: "CNY", observedAt: Date()).count == 3,
+                     "A readable same-name price remains monitored")
         let duplicates = html.replacingOccurrences(of: "Pro 终身会员", with: "Ultimate")
             .replacingOccurrences(of: "Ultimate 终身会员", with: "Ultimate")
         PriceURLProtocol.handler = { request in
             (200, request.url!.host == "itunes.apple.com" ? data : Data(duplicates.utf8))
         }
         let duplicateResult = try await client.fetch(id: listing.trackId, country: "cn", expectedBundle: listing.bundleId)
-        precondition(duplicateResult.purchaseSnapshot?.purchases.count == 4 && duplicateResult.purchaseCount == 0,
-                     "Even an entirely ambiguous list must remain visible")
-        precondition(duplicateResult.purchaseCoverageKey == "monitor.coverage.partial")
+        precondition(duplicateResult.purchaseSnapshot?.purchases.count == 4 && duplicateResult.purchaseCount == 1,
+                     "Same-name rows share the lowest explicit price")
+        precondition(duplicateResult.purchaseCoverageKey == "monitor.coverage.public")
         let missingPrice = malformed.replacingOccurrences(of: "¥68.00", with: "")
         PriceURLProtocol.handler = { request in
             (200, request.url!.host == "itunes.apple.com" ? data : Data(missingPrice.utf8))
         }
         let incomplete = try await client.fetch(id: listing.trackId, country: "cn", expectedBundle: listing.bundleId)
-        precondition(incomplete.purchaseSnapshot?.purchases.count == 4 && incomplete.purchaseCount == 1)
+        precondition(incomplete.purchaseSnapshot?.purchases.count == 4 && incomplete.purchaseCount == 2)
         precondition(incomplete.purchaseSnapshot?.purchases.contains { $0.price.isEmpty } == true)
         let noPurchases = try DetailsFixtures.pageHTML(listing: listing, purchases: false)
         PriceURLProtocol.handler = { request in
@@ -261,7 +263,7 @@ struct PriceMonitoringTests {
             (200, request.url!.host == "itunes.apple.com" ? data : Data(english.utf8))
         }
         let us = try await client.fetch(id: listing.trackId, country: "us", expectedBundle: listing.bundleId)
-        precondition(us.purchaseSnapshot?.purchases.count == 4 && us.purchaseCount == 2)
+        precondition(us.purchaseSnapshot?.purchases.count == 4 && us.purchaseCount == 3)
         precondition(us.quotes.filter { $0.kind == .inAppPurchase }.allSatisfy { $0.id.hasPrefix("iap:name:") },
                      "English storefront identity stays unchanged")
         PriceURLProtocol.handler = { _ in (200, Data(#"{"results":[]}"#.utf8)) }
@@ -375,8 +377,8 @@ struct PriceMonitoringTests {
         await Task.yield()
         await store.setEnabled(false, watchID: PriceFixtures.app.id)
         await loader.finish(PriceFixtures.result(at: Date(), appPrice: 0, purchasePrice: 0))
-        await check.value
-        await joined.value
+        _ = await check.value
+        _ = await joined.value
         let calls = await loader.calls
         precondition(calls == 1 && !store.isChecking, "Refreshes must coalesce")
         precondition(store.state.events.isEmpty && store.state.watches[0].products.allSatisfy { $0.candidate == nil })

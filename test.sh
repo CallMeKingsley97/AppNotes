@@ -31,4 +31,11 @@ xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   Tests/DetailsFixtures.swift Tests/PriceFixtures.swift Tests/PriceMonitoringTests.swift \
   -o Build/Tests/PriceMonitoringTests
 Build/Tests/PriceMonitoringTests
+xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
+  -module-cache-path Build/ModuleCache \
+  Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift \
+  Sources/PriceModels.swift Sources/PriceClient.swift Sources/PriceMonitorStore.swift \
+  Tests/DetailsFixtures.swift Tests/PriceFixtures.swift Tests/MonitorReliabilityTests.swift \
+  -o Build/Tests/MonitorReliabilityTests
+Build/Tests/MonitorReliabilityTests
 plutil -lint Info.plist Resources/en.lproj/Localizable.strings Resources/zh-Hans.lproj/Localizable.strings

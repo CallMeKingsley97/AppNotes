@@ -60,12 +60,20 @@ final class PriceMonitorStore: ObservableObject {
     @Published private(set) var isChecking = false
     @Published private(set) var progress = 0
     @Published private(set) var total = 0
+    @Published private(set) var refreshReport: PriceRefreshReport?
+    @Published private(set) var watchReports: [String: PriceRefreshReport] = [:]
+    @Published private(set) var activeWatchID: String?
+    private var pending: [PriceWatch] = []
+    private var manualTargets: Set<String> = []
+    private var activeRevision: UUID?
+    private var isFinishingPass = false
+    private var passReports: [String: PriceRefreshReport] = [:]
     @Published var errorKey: String?
     @Published private(set) var undoMessageKey: String?
     let writable: Bool
     private let repository: PriceRepository
     private let loader: any PriceLoading
-    private var checkTask: Task<Void, Never>?
+    private var checkTask: Task<[String: PriceRefreshReport], Never>?
     private var verificationTask: Task<Void, Never>?
     private var scheduler: NSBackgroundActivityScheduler?
     private var wakeObserver: NSObjectProtocol?
@@ -94,8 +102,8 @@ final class PriceMonitorStore: ObservableObject {
     }
     func watch(for id: String) -> PriceWatch? { state.watches.first { $0.id == id } }
 
-    func inspect(id: Int64, country: String, bundle: String? = nil) async throws -> PriceCheckResult {
-        try await loader.fetch(id: id, country: country, expectedBundle: bundle)
+    func inspect(id: Int64, country: String, bundle: String? = nil, purchases: Bool = true) async throws -> PriceCheckResult {
+        try await loader.fetch(PriceRequest(id: id, country: country, expectedBundle: bundle, purchases: purchases))
     }
 
     @discardableResult
@@ -242,75 +250,197 @@ final class PriceMonitorStore: ObservableObject {
         await refresh()
     }
 
-    func refresh(watchID: String? = nil, force: Bool = false) async {
-        guard writable, Date() >= storageRetryAfter else { return }
-        if let running = checkTask {
-            await running.value
-            return // All callers join the same pass; only its owner clears the task.
+    @discardableResult
+    func refresh(watchID: String? = nil, force: Bool = false) async -> PriceRefreshReport {
+        if isFinishingPass, let running = checkTask {
+            _ = await running.value
+            return await refresh(watchID: watchID, force: force)
         }
         let now = Date()
-        let targets = state.watches.filter {
-            $0.isEnabled && (watchID == nil || $0.id == watchID) &&
-            (force ? now.timeIntervalSince($0.lastAttempt ?? .distantPast) >= 60 && ($0.errorKey != "monitor.error.rate" || $0.nextCheck <= now)
-                   : $0.nextCheck <= now)
+        guard writable, now >= storageRetryAfter else {
+            let report = PriceRefreshReport(disposition: .failed, retryAfter: storageRetryAfter > now ? storageRetryAfter : nil)
+            publish(report, watchID: watchID, manual: force)
+            return report
         }
-        guard !targets.isEmpty else { armVerification(); return }
-        isChecking = true
-        progress = 0
-        total = targets.count
-        let work = Task { [weak self] in
-            guard let self else { return }
-            var allSuccessful = true
-            for target in targets {
-                guard !Task.isCancelled else { allSuccessful = false; break }
-                guard let current = self.watch(for: target.id), current.revision == target.revision, current.isEnabled else { allSuccessful = false; continue }
-                do {
-                    let result = try await self.loader.fetch(id: target.app.storeID, country: target.app.country,
-                                                            expectedBundle: target.app.bundleID)
-                    try Task.checkCancellation()
-                    let completedAt = Date()
-                    let success = await self.commit { snapshot in
-                        guard let index = snapshot.watches.firstIndex(where: { $0.id == target.id && $0.revision == target.revision && $0.isEnabled }) else { return }
-                        var updated = snapshot.watches[index]
-                        PriceRules.apply(result, to: &updated, events: &snapshot.events, now: completedAt)
-                        snapshot.watches[index] = updated
-                    }
-                    if !success || self.watch(for: target.id)?.revision != target.revision || (target.watchesApplication && !result.applicationAvailable) ||
-                        (target.watchesPurchases && result.purchaseCoverageKey == "monitor.coverage.unavailable") { allSuccessful = false }
-                } catch {
-                    if Task.isCancelled || error is CancellationError { allSuccessful = false; break }
-                    allSuccessful = false
-                    let message = (error as? PriceClientError)?.messageKey ?? "monitor.error.network"
-                    let attempt = Date()
-                    let retry: Date?
-                    if case let PriceClientError.rateLimited(date) = error { retry = date } else { retry = nil }
-                    _ = await self.commit { snapshot in
-                        guard let index = snapshot.watches.firstIndex(where: { $0.id == target.id && $0.revision == target.revision }) else { return }
-                        var watch = snapshot.watches[index]
-                        watch.failureCount += 1
-                        watch.lastAttempt = attempt
-                        watch.errorKey = message
-                        let delays: [TimeInterval] = [60, 300, 900, 3_600]
-                        watch.nextCheck = max(retry ?? .distantPast, attempt.addingTimeInterval(delays[min(watch.failureCount - 1, 3)]))
-                        snapshot.watches[index] = watch
-                    }
-                }
-                self.progress += 1
-                if self.storageRetryAfter > Date() { break }
-            }
-            if allSuccessful && targets.count == self.state.watches.filter(\.isEnabled).count {
-                let completed = Date()
-                _ = await self.commit { snapshot in
-                    snapshot.lastCompleteCheck = completed
-                    snapshot.events.removeAll { $0.readAt != nil && $0.endedAt.map { completed.timeIntervalSince($0) > 90 * 86_400 } == true }
-                }
+        let selected = state.watches.filter { $0.isEnabled && (watchID == nil || $0.id == watchID) }
+        var targets: [PriceWatch] = []
+        var waits: [Date] = []
+        for watch in selected {
+            let alreadyQueued = pending.contains { $0.id == watch.id && $0.revision == watch.revision }
+                || (activeWatchID == watch.id && activeRevision == watch.revision)
+            let allowed = max(watch.lastAttempt?.addingTimeInterval(60) ?? .distantPast,
+                watch.retryAfter ?? (watch.errorKey == "monitor.error.rate" ? watch.nextCheck : .distantPast))
+            if alreadyQueued || (force ? now >= allowed : now >= max(watch.nextCheck, allowed)) {
+                targets.append(watch)
+            } else if force {
+                waits.append(allowed)
+                watchReports[watch.id] = PriceRefreshReport(disposition: .waiting, waiting: 1, retryAfter: allowed)
             }
         }
-        checkTask = work
-        await work.value
-        checkTask = nil
-        isChecking = false
-        armVerification()
+        guard !targets.isEmpty else {
+            let report = PriceRefreshReport(disposition: waits.isEmpty ? .skipped : .waiting,
+                waiting: waits.count, retryAfter: waits.min())
+            publish(report, watchID: watchID, manual: force)
+            armVerification()
+            return report
+        }
+        if checkTask == nil {
+            progress = 0
+            total = 0
+            passReports = [:]
+        }
+        for target in targets {
+            if force && watchID != nil { manualTargets.insert(target.id) }
+            if !(activeWatchID == target.id && activeRevision == target.revision),
+               !pending.contains(where: { $0.id == target.id && $0.revision == target.revision }) {
+                pending.removeAll { $0.id == target.id }
+                pending.append(target)
+                total += 1
+            }
+            if force { watchReports[target.id] = PriceRefreshReport(disposition: .queued) }
+        }
+        publish(PriceRefreshReport(disposition: .queued), watchID: watchID, manual: force)
+        if checkTask == nil {
+            isChecking = true
+            checkTask = Task { [weak self] in await self?.runChecks() ?? [:] }
+        }
+        let work = checkTask!
+        let completedReports = await work.value
+        let reports = targets.compactMap { completedReports[$0.id] }
+        let successes = reports.filter { $0.disposition == .updated }.count
+        let checked = reports.reduce(0) { $0 + $1.checked }
+        let disposition: PriceRefreshReport.Disposition
+        if reports.contains(where: { $0.disposition == .cancelled }) { disposition = .cancelled }
+        else if successes == targets.count && waits.isEmpty { disposition = .updated }
+        else if successes > 0 || reports.contains(where: { $0.disposition == .partial }) { disposition = .partial }
+        else { disposition = .failed }
+        let report = PriceRefreshReport(disposition: disposition, checked: checked, waiting: waits.count,
+            retryAfter: (waits + reports.compactMap(\.retryAfter)).min())
+        publish(report, watchID: watchID, manual: force)
+        return report
+    }
+
+    private func publish(_ report: PriceRefreshReport, watchID: String?, manual: Bool) {
+        guard manual else { return }
+        refreshReport = report
+        if let watchID { watchReports[watchID] = report }
+    }
+
+    private func prioritize() {
+        pending.sort {
+            let left = manualTargets.contains($0.id), right = manualTargets.contains($1.id)
+            if left != right { return left }
+            let lc = $0.products.contains { $0.candidate != nil }
+            let rc = $1.products.contains { $0.candidate != nil }
+            if lc != rc { return lc }
+            return $0.nextCheck == $1.nextCheck ? $0.id < $1.id : $0.nextCheck < $1.nextCheck
+        }
+    }
+
+    private func runChecks() async -> [String: PriceRefreshReport] {
+        var prepared: [String: Result<PriceCheckResult, PriceFetchFailure>] = [:]
+        var preparedIDs: Set<String> = []
+        var attempts: [String: Int] = [:]
+        defer {
+            for target in pending { passReports[target.id] = PriceRefreshReport(disposition: .cancelled) }
+            pending = []
+            manualTargets = []
+            activeWatchID = nil
+            activeRevision = nil
+            checkTask = nil
+            isFinishingPass = false
+            isChecking = false
+            armVerification()
+        }
+        while !pending.isEmpty {
+            guard !Task.isCancelled, Date() >= storageRetryAfter else { break }
+            // Confirmations that become due during a long pass join before remaining routine work.
+            if started && state.automaticChecks {
+                for watch in state.watches where watch.isEnabled && watch.nextCheck <= Date()
+                    && watch.products.contains(where: { $0.candidate != nil }) && attempts[watch.id, default: 0] < 2
+                    && !pending.contains(where: { $0.id == watch.id }) {
+                    pending.append(watch)
+                    prepared.removeValue(forKey: watch.id)
+                    preparedIDs.remove(watch.id)
+                    total += 1
+                }
+            }
+            prioritize()
+            if let first = pending.first, !preparedIDs.contains(first.id) {
+                let batch = Array(pending.filter { $0.app.country == first.app.country && !preparedIDs.contains($0.id) }.prefix(10))
+                let lookups = await loader.lookup(batch.map(\.request))
+                prepared.merge(lookups) { _, new in new }
+                preparedIDs.formUnion(batch.map(\.id))
+                guard !Task.isCancelled else { break }
+                // A user request may have arrived during the lookup. Reconsider priorities before taking a target.
+                prioritize()
+            }
+            let target = pending.removeFirst()
+            guard let current = watch(for: target.id), current.revision == target.revision, current.isEnabled else {
+                passReports[target.id] = PriceRefreshReport(disposition: .cancelled)
+                progress += 1
+                continue
+            }
+            activeWatchID = target.id
+            activeRevision = target.revision
+            attempts[target.id, default: 0] += 1
+            var report: PriceRefreshReport
+            do {
+                let result: PriceCheckResult
+                if let cached = prepared.removeValue(forKey: target.id) {
+                    result = try await loader.complete(target.request, lookup: cached.get())
+                } else { result = try await loader.fetch(target.request) }
+                try Task.checkCancellation()
+                let now = Date()
+                let saved = await commit { snapshot in
+                    guard let index = snapshot.watches.firstIndex(where: { $0.id == target.id && $0.revision == target.revision && $0.isEnabled }) else { return }
+                    PriceRules.apply(result, to: &snapshot.watches[index], events: &snapshot.events, now: now)
+                }
+                if !saved { report = PriceRefreshReport(disposition: .failed) }
+                else if watch(for: target.id)?.revision != target.revision { report = PriceRefreshReport(disposition: .cancelled) }
+                else {
+                    let appOK = !target.watchesApplication || result.applicationAvailable
+                    let purchaseOK = !target.watchesPurchases ||
+                        (result.purchaseStatus?.succeeded ?? (result.purchaseCoverageKey != "monitor.coverage.unavailable"))
+                    report = PriceRefreshReport(disposition: appOK && purchaseOK ? .updated :
+                        ((target.watchesApplication && result.applicationAvailable) || (target.watchesPurchases && purchaseOK) ? .partial : .failed),
+                        checked: 1, retryAfter: watch(for: target.id)?.retryAfter)
+                }
+            } catch {
+                if Task.isCancelled || error is CancellationError {
+                    passReports[target.id] = PriceRefreshReport(disposition: .cancelled)
+                    break
+                }
+                let failure = AppStorePriceClient.failure(error)
+                let now = Date()
+                _ = await commit { snapshot in
+                    guard let index = snapshot.watches.firstIndex(where: { $0.id == target.id && $0.revision == target.revision }) else { return }
+                    PriceRules.failed(failure, watch: &snapshot.watches[index], events: &snapshot.events, now: now)
+                    // Bounded jitter avoids synchronized retry storms across installations.
+                    if failure.retryAfter == nil {
+                        snapshot.watches[index].nextCheck += Double.random(in: 0...30)
+                    }
+                }
+                report = PriceRefreshReport(disposition: .failed, checked: 1, retryAfter: failure.retryAfter)
+            }
+            passReports[target.id] = report
+            watchReports[target.id] = report
+            activeWatchID = nil
+            activeRevision = nil
+            manualTargets.remove(target.id)
+            progress += 1
+        }
+        isFinishingPass = true
+        let enabled = state.watches.filter(\.isEnabled)
+        if !Task.isCancelled, !enabled.isEmpty, enabled.allSatisfy({ passReports[$0.id]?.disposition == .updated }) {
+            let now = Date()
+            _ = await commit { snapshot in
+                snapshot.lastCompleteCheck = now
+                snapshot.events.removeAll { $0.readAt != nil && $0.endedAt.map { now.timeIntervalSince($0) > 90 * 86_400 } == true }
+            }
+        }
+        for target in pending { passReports[target.id] = PriceRefreshReport(disposition: .cancelled) }
+        return passReports
     }
 
     private func configureScheduler() {

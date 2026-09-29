@@ -26,6 +26,16 @@ enum PriceFixtures {
                 PriceRules.apply(result(at: date, appPrice: index == 1 ? 28 : 0,
                                         purchasePrice: index == 0 ? 0 : 68, app: app), to: &watch, events: &state.events, now: date)
             }
+            let observed = now.addingTimeInterval(-400)
+            watch.purchaseSnapshot = PurchaseSnapshot(purchases: [
+                InAppPurchase(name: "Lifetime Pro", price: index == 0 ? "¥0.00" : "¥68.00"),
+                InAppPurchase(name: "Pro", price: "¥38.00"),
+                InAppPurchase(name: "Pro", price: "¥28.00"),
+                InAppPurchase(name: "Trial", price: "Free")
+            ], observedAt: observed, currency: "CNY")
+            watch.applicationStatus = PriceSourceStatus(attemptedAt: observed)
+            watch.purchaseStatus = PriceSourceStatus(attemptedAt: observed)
+            watch.purchaseCoverageKey = "monitor.coverage.partial"
             if index == 1 { watch.isEnabled = false }
             state.watches.append(watch)
         }

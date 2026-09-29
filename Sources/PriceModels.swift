@@ -50,6 +50,54 @@ struct ProductQuote: Sendable {
     var price: PriceQuote
 }
 
+enum PriceFetchIssue: String, Codable, Sendable {
+    case network, rate, region, response, identity, pageFormat, pageIdentity, price, purchases
+    var messageKey: String { "monitor.error.\(rawValue)" }
+}
+
+struct PriceFetchFailure: Error, Codable, Equatable, Sendable {
+    var issue: PriceFetchIssue
+    var retryAfter: Date?
+}
+
+struct PriceSourceStatus: Codable, Equatable, Sendable {
+    var attemptedAt: Date
+    var failure: PriceFetchFailure?
+    var succeeded: Bool { failure == nil }
+}
+
+struct PriceRequest: Sendable {
+    var id: Int64
+    var country: String
+    var expectedBundle: String?
+    var purchases: Bool = true
+    var key: String { "\(id):\(country)" }
+}
+
+enum PurchaseComparison: String, Codable, Sendable {
+    case comparable, duplicate, missingPrice, unsupportedCurrency, trial, invalidName
+    var messageKey: String { "monitor.comparison.\(rawValue)" }
+}
+
+struct PurchaseAssessment: Sendable {
+    var purchase: InAppPurchase
+    var name: String
+    var comparison: PurchaseComparison
+    var amount: Decimal?
+    func productID(language: String) -> String {
+        language == "en" ? "iap:name:\(name)" : "iap:\(language):name:\(name)"
+    }
+}
+
+struct PriceRefreshReport: Sendable {
+    enum Disposition: String, Sendable { case updated, partial, failed, waiting, queued, skipped, cancelled }
+    var disposition: Disposition
+    var checked = 0
+    var waiting = 0
+    var retryAfter: Date?
+    var messageKey: String { "monitor.refresh.\(disposition.rawValue)" }
+}
+
 struct PriceCandidate: Codable, Equatable, Sendable {
     var isFree: Bool
     var firstObservedAt: Date
@@ -82,12 +130,23 @@ struct PriceWatch: Codable, Equatable, Identifiable, Sendable {
     var purchaseCoverageKey = "monitor.coverage.pending"
     var purchaseCount = 0
     var purchaseSnapshot: PurchaseSnapshot?
+    var applicationStatus: PriceSourceStatus?
+    var purchaseStatus: PriceSourceStatus?
+
+    var request: PriceRequest {
+        PriceRequest(id: app.storeID, country: app.country, expectedBundle: app.bundleID, purchases: watchesPurchases)
+    }
+    var retryAfter: Date? {
+        [applicationStatus?.failure?.retryAfter, watchesPurchases ? purchaseStatus?.failure?.retryAfter : nil]
+            .compactMap { $0 }.max()
+    }
 }
 
 /// The public list is display data, not a set of stable product identities.
 struct PurchaseSnapshot: Codable, Equatable, Sendable {
     var purchases: [InAppPurchase]
     var observedAt: Date
+    var currency: String? = nil
 }
 
 enum PriceEventStatus: String, Codable, Sendable {
@@ -135,6 +194,11 @@ struct PriceCheckResult: Sendable {
     var purchaseCount: Int
     var applicationAvailable: Bool
     var purchaseSnapshot: PurchaseSnapshot? = nil
+    var applicationStatus: PriceSourceStatus? = nil
+    var purchaseStatus: PriceSourceStatus? = nil
+    // Valid public list (even if some entries cannot be compared), not a request failure.
+    var purchaseIdentityObserved: Bool = true
+    var listing: StoreListing? = nil
 }
 
 enum PriceRules {
@@ -149,18 +213,27 @@ enum PriceRules {
                       events: inout [FreePriceEvent], now: Date) {
         watch.app = result.app
         watch.lastAttempt = now
-        watch.purchaseCoverageKey = result.purchaseCoverageKey
-        watch.purchaseCount = result.purchaseCount
+        if watch.watchesPurchases {
+            watch.purchaseCoverageKey = result.purchaseCoverageKey
+            watch.purchaseCount = result.purchaseCount
+        }
+        watch.applicationStatus = result.applicationStatus ?? PriceSourceStatus(attemptedAt: now,
+            failure: result.applicationAvailable ? nil : PriceFetchFailure(issue: .price))
+        if watch.watchesPurchases {
+            watch.purchaseStatus = result.purchaseStatus ?? PriceSourceStatus(attemptedAt: now,
+                failure: result.purchaseCoverageKey == "monitor.coverage.unavailable" ? PriceFetchFailure(issue: .purchases) : nil)
+        }
         // Retain the last observed list on network failure; the UI shows its timestamp.
         if let snapshot = result.purchaseSnapshot { watch.purchaseSnapshot = snapshot }
         watch.nextCheck = now.addingTimeInterval(interval)
-        watch.errorKey = watch.watchesApplication && !result.applicationAvailable ? "monitor.error.price" :
-            (watch.watchesPurchases && result.purchaseCoverageKey == "monitor.coverage.unavailable" ? "monitor.error.purchases" : nil)
+        watch.errorKey = (watch.watchesApplication ? watch.applicationStatus?.failure : nil)?.issue.messageKey
+            ?? (watch.watchesPurchases ? watch.purchaseStatus?.failure : nil)?.issue.messageKey
         if watch.errorKey != nil {
             watch.failureCount += 1
             let delays: [TimeInterval] = [300, 900, 3_600]
             watch.nextCheck = now.addingTimeInterval(delays[min(watch.failureCount - 1, 2)])
         } else { watch.failureCount = 0 }
+        if let retry = watch.retryAfter { watch.nextCheck = max(watch.nextCheck, retry) }
         if watch.errorKey == nil { watch.lastSuccess = now }
         let quotes = result.quotes.filter {
             ($0.kind == .application && watch.watchesApplication) || ($0.kind == .inAppPurchase && watch.watchesPurchases)
@@ -169,12 +242,19 @@ enum PriceRules {
         for index in watch.products.indices where !observed.contains(watch.products[index].id) {
             watch.products[index].unavailable = true
             watch.products[index].candidate = nil
-            // An IAP can disappear from the public top list, or become ambiguous. Never infer zero.
-            watch.products[index].paidBaseline = nil
+            let identityLost = watch.products[index].kind == .inAppPurchase
+                && watch.watchesPurchases && result.purchaseIdentityObserved
+            let baselineExpired = watch.products[index].paidBaseline.map {
+                !(0...baselineLifetime).contains(now.timeIntervalSince($0.observedAt))
+            } ?? false
+            // A transient outage interrupts confirmation, but preserves a recent paid observation.
+            let scopeDisabled = watch.products[index].kind == .application ? !watch.watchesApplication : !watch.watchesPurchases
+            if identityLost || baselineExpired || scopeDisabled { watch.products[index].paidBaseline = nil }
             if let episode = watch.products[index].episodeID,
                let event = events.firstIndex(where: { $0.id == episode && $0.status != .ended }) {
                 events[event].status = .unavailable
             }
+            if identityLost { watch.products[index].episodeID = nil }
         }
         for quote in quotes {
             if !watch.products.contains(where: { $0.id == quote.id }) {
@@ -187,6 +267,16 @@ enum PriceRules {
                     candidate.firstObservedAt.addingTimeInterval(confirmation)))
             }
         }
+        if let retry = watch.retryAfter { watch.nextCheck = max(watch.nextCheck, retry) }
+    }
+
+    static func failed(_ failure: PriceFetchFailure, watch: inout PriceWatch,
+                       events: inout [FreePriceEvent], now: Date) {
+        let source = PriceSourceStatus(attemptedAt: now, failure: failure)
+        let result = PriceCheckResult(app: watch.app, quotes: [], purchaseCoverageKey: "monitor.coverage.unavailable",
+            purchaseCount: 0, applicationAvailable: false, applicationStatus: source,
+            purchaseStatus: watch.watchesPurchases ? source : nil, purchaseIdentityObserved: false)
+        apply(result, to: &watch, events: &events, now: now)
     }
 
     private static func reduce(_ quote: ProductQuote, app: WatchedApp,
@@ -204,6 +294,26 @@ enum PriceRules {
         state.name = quote.name
         state.unavailable = false
         state.latest = quote.price
+        if quote.kind == .inAppPurchase {
+            // One explicit zero price starts an offer; repeated observations update it.
+            state.candidate = nil
+            if let episode = state.episodeID, let index = events.firstIndex(where: { $0.id == episode }) {
+                events[index].current = quote.price
+                events[index].status = quote.price.amount == 0 ? .free : .ended
+                if quote.price.amount > 0 {
+                    events[index].endedAt = now
+                    state.episodeID = nil
+                }
+            } else if quote.price.amount == 0 {
+                let id = UUID()
+                events.append(FreePriceEvent(id: id, app: app, productID: quote.id, productName: quote.name,
+                    kind: quote.kind, previous: state.paidBaseline ?? quote.price, current: quote.price,
+                    discoveredAt: now, confirmedAt: now))
+                state.episodeID = id
+            }
+            if quote.price.amount > 0 { state.paidBaseline = quote.price }
+            return
+        }
         if let candidate = state.candidate, now.timeIntervalSince(candidate.firstObservedAt) > candidateLifetime {
             state.candidate = nil
         }
