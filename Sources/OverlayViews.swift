@@ -25,7 +25,7 @@ struct SearchOverlayView: View {
             HStack(spacing: 12) {
                 Image(systemName: "magnifyingglass").font(.title2.weight(.regular)).foregroundStyle(.secondary)
                 TextField(preferences.text("search.placeholder"), text: $query)
-                    .textFieldStyle(.plain).font(.system(size: 20))
+                    .textFieldStyle(.plain).font(.title2)
                     .focused($isFocused).onSubmit { openHighlighted() }
                     .accessibilityLabel(preferences.text("search.placeholder"))
                 Button(action: onClose) {
@@ -34,7 +34,7 @@ struct SearchOverlayView: View {
                 .buttonStyle(.plain).help(preferences.text("search.close"))
                 .accessibilityLabel(preferences.text("search.close"))
             }
-            .padding(20)
+            .padding(PageStyle.inset)
             Divider()
             if results.isEmpty {
                 EmptyState(symbol: query.isEmpty ? "note.text" : "magnifyingglass",
@@ -45,7 +45,7 @@ struct SearchOverlayView: View {
                 VStack(alignment: .leading, spacing: 0) {
                     Text(preferences.text(query.isEmpty ? "search.saved" : "search.results"))
                         .font(.caption.weight(.medium)).foregroundStyle(.secondary)
-                        .padding(.horizontal, 20).padding(.top, 12).padding(.bottom, 6)
+                        .padding(.horizontal, PageStyle.inset).padding(.top, 12).padding(.bottom, 6)
                     ScrollViewReader { proxy in
                         ScrollView {
                             LazyVStack(spacing: 3) {
@@ -209,7 +209,7 @@ struct HUDView: View {
                 HStack {
                     Text(content.appName).font(.callout.weight(.semibold)).lineLimit(1)
                     Spacer(minLength: 12)
-                    Text(preferences.text("hud.note")).font(.system(size: 9, weight: .medium)).foregroundStyle(.tertiary)
+                    Text(preferences.text("hud.note")).font(.caption2.weight(.medium)).foregroundStyle(.tertiary)
                 }
                 Text(content.note).font(.callout).foregroundStyle(.secondary).lineLimit(3)
                     .fixedSize(horizontal: false, vertical: true)

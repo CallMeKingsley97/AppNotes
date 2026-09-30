@@ -39,7 +39,8 @@ struct DetailView: View {
                 Spacer(minLength: 12)
                 refreshButton
             }
-            .padding(.horizontal, 24).padding(.bottom, 18)
+            .padding(.horizontal, PageStyle.inset).padding(.bottom, 20)
+            .frame(maxWidth: PageStyle.width).frame(maxWidth: .infinity)
             Divider()
             Group {
                 if tab == "notes" {
@@ -70,11 +71,11 @@ struct DetailView: View {
     }
 
     private var header: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            HStack(spacing: 14) {
-                AppIcon(app: app, size: 58)
+        VStack(alignment: .leading, spacing: PageStyle.spacing) {
+            HStack(alignment: .top, spacing: 16) {
+                AppIcon(app: app, size: 56)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(app.name).font(.system(size: 23, weight: .semibold))
+                    Text(app.name).font(.title2.weight(.semibold))
                         .lineLimit(2).textSelection(.enabled)
                     HStack(spacing: 8) {
                         Text(preferences.text(AppCategory.of(app).titleKey))
@@ -105,7 +106,7 @@ struct DetailView: View {
                     .menuStyle(.borderlessButton).fixedSize()
                 }
             }
-            .buttonStyle(.bordered).controlSize(.regular)
+            .buttonStyle(.bordered).controlSize(.large)
             let categories = categoryStore.categories.filter { categoryStore.contains(app, in: $0) }
             if !categories.isEmpty {
                 Label(categories.map(\.name).joined(separator: preferences.language.resolvedIdentifier() == "zh-Hans" ? "、" : ", "),
@@ -114,7 +115,8 @@ struct DetailView: View {
                     .lineLimit(2).help(categories.map(\.name).joined(separator: "\n"))
             }
         }
-        .padding(24)
+        .padding(PageStyle.inset)
+        .frame(maxWidth: PageStyle.width, alignment: .leading).frame(maxWidth: .infinity)
     }
 
     private var watchEntry: AppEntry {
@@ -197,14 +199,14 @@ struct DetailView: View {
 
     private var overview: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 18) {
+            VStack(alignment: .leading, spacing: PageStyle.spacing) {
                 sourceStatus
                 AppIntroductionCard(details: details, suggestion: suggestionStore.raw(for: app.path), loading: loading)
                 AppInformationCard(app: app, details: details, local: local)
                 InAppPurchasesCard(details: details, loading: loading)
             }
-            .padding(24)
-            .frame(maxWidth: 820)
+            .padding(PageStyle.inset)
+            .frame(maxWidth: PageStyle.width)
             .frame(maxWidth: .infinity)
         }
     }
@@ -253,22 +255,14 @@ struct InfoCard<Actions: View, Content: View>: View {
     @ViewBuilder var content: () -> Content
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
+        DetailCard {
             HStack(spacing: 9) {
-                Image(systemName: symbol)
-                    .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 28, height: 28)
-                    .background(Color.accentColor.opacity(0.08), in: Radius.shape(Radius.control))
-                Text(title).font(.headline)
+                Label(title, systemImage: symbol).font(.headline)
                 Spacer(minLength: 8)
                 actions().controlSize(.small).buttonStyle(.borderless)
             }
             content()
         }
-        .padding(18)
-        .frame(maxWidth: .infinity, alignment: .leading)
-        .elevatedCard()
     }
 }
 
@@ -623,8 +617,8 @@ private struct AppUpdatesView: View {
     var body: some View {
         ScrollView {
             AppUpdatesCard(updates: updates, country: details?.country, loading: loading)
-                .padding(24)
-                .frame(maxWidth: 820)
+                .padding(PageStyle.inset)
+                .frame(maxWidth: PageStyle.width)
                 .frame(maxWidth: .infinity)
         }
     }

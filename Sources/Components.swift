@@ -34,6 +34,45 @@ enum AppSurface {
     }
 }
 
+/// Shared spacing and surfaces for detail pages and editors.
+enum PageStyle {
+    static let inset: CGFloat = 28
+    static let spacing: CGFloat = 24
+    static let width: CGFloat = 760
+}
+
+struct DetailCard<Content: View>: View {
+    @ViewBuilder var content: () -> Content
+    var body: some View {
+        VStack(alignment: .leading, spacing: 18, content: content)
+            .padding(20)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .elevatedCard()
+    }
+}
+
+struct PageHeading: View {
+    let title: String
+    let subtitle: String
+    let symbol: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            Image(systemName: symbol)
+                .font(.system(size: 24, weight: .medium))
+                .foregroundStyle(Color.accentColor)
+                .frame(width: 56, height: 56)
+                .background(Color.accentColor.opacity(0.10), in: Radius.shape(12))
+                .accessibilityHidden(true)
+            VStack(alignment: .leading, spacing: 7) {
+                Text(title).font(.title2.weight(.semibold))
+                Text(subtitle).font(.callout).foregroundStyle(.secondary)
+            }.fixedSize(horizontal: false, vertical: true)
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 struct AppIcon: View {
     let app: AppEntry
     let size: CGFloat
@@ -264,7 +303,7 @@ struct ElevatedCard: ViewModifier {
             .background(AppSurface.card, in: Radius.shape(radius))
             .overlay {
                 Radius.shape(radius)
-                    .strokeBorder(Color.primary.opacity(0.08), lineWidth: 1)
+                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
                     .allowsHitTesting(false)
             }
     }

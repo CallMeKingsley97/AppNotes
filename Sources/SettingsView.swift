@@ -6,82 +6,58 @@ struct SettingsView: View {
     var onManageWatches: () -> Void = {}
 
     var body: some View {
-        VStack(spacing: 0) {
-            HStack(spacing: 14) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.system(size: 24, weight: .medium))
-                    .foregroundStyle(Color.accentColor)
-                    .frame(width: 52, height: 52)
-                    .background(Color.accentColor.opacity(0.1), in: Radius.shape(Radius.surface))
-                VStack(alignment: .leading, spacing: 5) {
-                    Text(preferences.text("settings.title")).font(.title2.weight(.semibold))
-                    Text(preferences.text("settings.personalize")).font(.callout).foregroundStyle(.secondary)
+        ScrollView {
+            VStack(alignment: .leading, spacing: PageStyle.spacing) {
+                PageHeading(title: preferences.text("settings.title"),
+                    subtitle: preferences.text("settings.personalize"), symbol: "slider.horizontal.3")
+                DetailCard {
+                    Label(preferences.text("settings.appearance"), systemImage: "circle.lefthalf.filled").font(.headline)
+                    HStack(spacing: 12) {
+                        ForEach(AppAppearance.allCases) { appearance in appearanceOption(appearance) }
+                    }
+                    Text(preferences.text("settings.appearance.help")).font(.caption).foregroundStyle(.secondary)
                 }
-                Spacer()
-            }
-            .padding(.horizontal, 24).padding(.top, 24).padding(.bottom, 6)
-
-            Form {
-                Section {
-                    VStack(alignment: .leading, spacing: 14) {
-                        HStack(spacing: 12) {
-                            ForEach(AppAppearance.allCases) { appearance in
-                                appearanceOption(appearance)
+                DetailCard {
+                    HStack {
+                        Label(preferences.text("settings.language"), systemImage: "globe").font(.headline)
+                        Spacer()
+                        Picker(preferences.text("settings.language"), selection: $preferences.language) {
+                            ForEach(AppLanguage.allCases) { language in
+                                Text(preferences.text("language.\(language.rawValue)")).tag(language)
                             }
-                        }
-                        Text(preferences.text("settings.appearance.help"))
-                            .font(.caption).foregroundStyle(.secondary)
+                        }.labelsHidden().pickerStyle(.menu).fixedSize()
                     }
-                    .padding(.vertical, 4)
-                } header: {
-                    Label(preferences.text("settings.appearance"), systemImage: "circle.lefthalf.filled")
-                }
-                Section {
-                    Picker(preferences.text("settings.language"), selection: $preferences.language) {
-                        ForEach(AppLanguage.allCases) { language in
-                            Text(preferences.text("language.\(language.rawValue)")).tag(language)
-                        }
-                    }
-                    .pickerStyle(.menu)
                     Text(preferences.text("settings.language.help"))
-                        .font(.caption).foregroundStyle(.secondary)
-                        .fixedSize(horizontal: false, vertical: true)
-                } header: {
-                    Label(preferences.text("settings.language"), systemImage: "globe")
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
                 }
-                Section {
+                DetailCard {
+                    Label(preferences.text("monitor.title"), systemImage: "bell").font(.headline)
                     Toggle(preferences.text("monitor.automatic"), isOn: Binding(
                         get: { monitor.state.automaticChecks },
                         set: { enabled in Task { await monitor.setAutomaticChecks(enabled) } }
                     )).toggleStyle(.switch).disabled(!monitor.writable)
                     Text(preferences.text("monitor.runtime"))
-                        .font(.caption).foregroundStyle(.secondary)
-                    Button(preferences.text("monitor.watches"), action: onManageWatches)
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Button(preferences.text("monitor.watches"), action: onManageWatches).buttonStyle(.bordered)
                     MonitorFeedback(monitor: monitor)
-                } header: {
-                    Label(preferences.text("monitor.title"), systemImage: "bell")
                 }
-                Section {
+                DetailCard {
+                    Label(preferences.text("settings.behavior"), systemImage: "keyboard").font(.headline)
                     Toggle(isOn: $preferences.hudEnabled) {
-                        VStack(alignment: .leading, spacing: 4) {
+                        VStack(alignment: .leading, spacing: 6) {
                             Text(preferences.text("settings.hud"))
                             Text(preferences.text("settings.hud.help"))
                                 .font(.caption).foregroundStyle(.secondary)
-                        }
-                    }
-                    .toggleStyle(.switch)
+                        }.frame(maxWidth: .infinity, alignment: .leading)
+                    }.toggleStyle(.switch)
+                    Divider()
                     LabeledContent(preferences.text("settings.shortcut")) {
                         Text("⌃⌥N").font(.system(.body, design: .monospaced)).foregroundStyle(.secondary)
                     }
-                } header: {
-                    Label(preferences.text("settings.behavior"), systemImage: "keyboard")
                 }
-            }
-            .formStyle(.grouped)
-            .scrollContentBackground(.hidden)
-
-            Text(preferences.text("settings.saved"))
-                .font(.caption).foregroundStyle(.tertiary).padding(.bottom, 18)
+                Label(preferences.text("settings.saved"), systemImage: "checkmark.circle")
+                    .font(.caption).foregroundStyle(.secondary)
+            }.padding(PageStyle.inset)
         }
         .frame(width: 520, height: 620)
         .background(Color(nsColor: .windowBackgroundColor))

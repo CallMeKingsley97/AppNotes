@@ -303,3 +303,11 @@
 "monitor.comparison.baselineEvidence" = "Paid baseline: %@ · observed %@";
 "monitor.source.legacy" = "These results were saved by an earlier version. Check now to verify them again.";
 "monitor.refresh.ready" = "Cooldown ended. You can check again.";
+
+"monitor.offerDetails" = "Offer details";
+"monitor.checkDetails" = "Check details & information";
+"monitor.purchaseItems" = "%d items";
+"monitor.schedule" = "Checks hourly while the app is running";
+"monitor.lastChecked" = "Last checked";
+"monitor.purchaseSection" = "In-App Purchases";
+"monitor.refreshing" = "Checking…";

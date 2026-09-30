@@ -303,3 +303,11 @@
 "monitor.comparison.baselineEvidence" = "收费基准：%@ · 观察于 %@";
 "monitor.source.legacy" = "这是旧版保存的检查结果，可点击立即检查重新核实。";
 "monitor.refresh.ready" = "冷却已结束，可以再次检查。";
+
+"monitor.offerDetails" = "限免说明";
+"monitor.checkDetails" = "检查详情与说明";
+"monitor.purchaseItems" = "%d 项";
+"monitor.schedule" = "App 运行时，每小时自动检查";
+"monitor.lastChecked" = "上次检查";
+"monitor.purchaseSection" = "App 内购买";
+"monitor.refreshing" = "正在检查…";

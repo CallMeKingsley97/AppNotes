@@ -173,16 +173,9 @@ struct CategoryEditor: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 20) {
-            HStack(spacing: 12) {
-                CategoryEmblem()
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(preferences.text(category == nil ? "category.new" : "category.rename"))
-                        .font(.title3.weight(.semibold))
-                    Text(preferences.text("category.editorHelp"))
-                        .font(.callout).foregroundStyle(.secondary)
-                }
-            }
-            VStack(alignment: .leading, spacing: 8) {
+            PageHeading(title: preferences.text(category == nil ? "category.new" : "category.rename"),
+                subtitle: preferences.text("category.editorHelp"), symbol: "folder")
+            DetailCard {
                 Text(preferences.text("category.name")).font(.callout.weight(.medium))
                 TextField(preferences.text("category.namePlaceholder"), text: $name)
                     .textFieldStyle(.plain)
@@ -215,7 +208,7 @@ struct CategoryEditor: View {
                     .disabled(validation != nil).accessibilityIdentifier("category.save")
             }
         }
-        .padding(24).frame(width: 420)
+        .padding(PageStyle.inset).frame(width: 460)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear { focused = true }
     }
@@ -255,18 +248,10 @@ struct CategoryAppsEditor: View {
     var body: some View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 18) {
-                HStack(spacing: 12) {
-                    CategoryEmblem()
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(category.name).font(.title3.weight(.semibold)).lineLimit(2)
-                        Text(preferences.text("category.manageHelp"))
-                            .font(.callout).foregroundStyle(.secondary)
-                    }
-                    Spacer(minLength: 0)
-                }
+                PageHeading(title: category.name, subtitle: preferences.text("category.manageHelp"), symbol: "folder")
                 SearchField(text: $query, prompt: preferences.text("category.search"))
             }
-            .padding(24)
+            .padding(PageStyle.inset)
             Divider()
             List {
                 ForEach(visibleApps) { app in
@@ -320,15 +305,5 @@ struct CategoryAppsEditor: View {
         }
         .frame(width: 540, height: 560)
         .background(Color(nsColor: .windowBackgroundColor))
-    }
-}
-
-private struct CategoryEmblem: View {
-    var body: some View {
-        Image(systemName: "folder")
-            .font(.system(size: 22, weight: .medium)).foregroundStyle(Color.accentColor)
-            .frame(width: 48, height: 48)
-            .background(Color.accentColor.opacity(0.1), in: Radius.shape(Radius.surface))
-            .accessibilityHidden(true)
     }
 }

@@ -78,12 +78,16 @@ struct PurchasePriceRows: View {
                             Label(item.name, systemImage: PriceKind.inAppPurchase.symbol)
                             Spacer(minLength: 12)
                             Text(item.purchase.price.isEmpty ? preferences.text("monitor.unknown") : item.purchase.price)
-                                .foregroundStyle(.secondary).monospacedDigit()
+                                .fontWeight(.medium).monospacedDigit()
                         }.font(.callout)
-                        Text(preferences.text(reason(item, now: context.date)))
-                            .font(.caption).foregroundStyle(.secondary)
-                            .padding(.leading, 24)
-                            .help(explanation(item))
+                        let status = reason(item, now: context.date)
+                        if status != "monitor.comparison.comparable" {
+                            Text(preferences.text(status))
+                                .font(.caption)
+                                .foregroundStyle(status == "monitor.status.free" ? Color.green : .secondary)
+                                .padding(.leading, 24)
+                                .help(explanation(item))
+                        }
                     }
                 }
             }
@@ -258,6 +262,26 @@ private struct PriceReminderRow: View {
     }
 }
 
+private struct MonitorDetailHeader: View {
+    @EnvironmentObject private var preferences: AppPreferences
+    let app: WatchedApp
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 16) {
+            AppIcon(app: app.entry, size: 56)
+                .clipShape(Radius.shape(12))
+            VStack(alignment: .leading, spacing: 7) {
+                Text(app.name).font(.title2.weight(.semibold))
+                    .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
+                Text((preferences.locale.localizedString(forRegionCode: app.country.uppercased()) ?? app.country.uppercased())
+                    + " · " + (app.platform == "mac-software" ? "Mac" : "iPhone / iPad"))
+                    .font(.callout).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+        }
+    }
+}
+
 struct PriceReminderDetail: View {
     @EnvironmentObject private var preferences: AppPreferences
     @ObservedObject var monitor: PriceMonitorStore
@@ -268,64 +292,61 @@ struct PriceReminderDetail: View {
         Group {
             if let event {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        HStack(spacing: 14) {
-                            AppIcon(app: event.app.entry, size: 58)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(event.app.name).font(.title2.weight(.semibold)).textSelection(.enabled)
+                    VStack(alignment: .leading, spacing: 24) {
+                        MonitorDetailHeader(app: event.app)
+                        ViewThatFits {
+                            HStack(spacing: 10) { actions(event) }
+                            VStack(alignment: .leading, spacing: 10) { actions(event) }
+                        }.controlSize(.large)
+
+                        DetailCard {
+                            HStack {
                                 PriceKindBadge(kind: event.kind)
-                            }
-                        }
-                        if event.kind == .inAppPurchase {
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(preferences.text("monitor.product")).font(.caption).foregroundStyle(.secondary)
-                                Text(event.productName).font(.title3.weight(.medium)).textSelection(.enabled)
-                            }
-                        }
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(preferences.text("monitor.dropped")).font(.headline)
-                            HStack(alignment: .firstTextBaseline, spacing: 12) {
-                                if event.previous.amount > 0 {
-                                    Text(event.previous.formatted(locale: preferences.locale))
-                                        .strikethrough().foregroundStyle(.secondary).font(.title3)
+                                Spacer()
+                                TimelineView(.periodic(from: .now, by: 60)) { context in
+                                    Label(preferences.text(event.statusKey(now: context.date)),
+                                          systemImage: event.status == .ended ? "clock" : "checkmark.circle")
+                                        .font(.caption.weight(.medium))
+                                        .foregroundStyle(event.statusKey(now: context.date) == "monitor.status.free" ? Color.green : .secondary)
                                 }
-                                Text(PriceQuote(amount: 0, currency: event.previous.currency, observedAt: event.confirmedAt)
-                                    .formatted(locale: preferences.locale)).font(.system(size: 30, weight: .semibold))
                             }
-                            TimelineView(.periodic(from: .now, by: 60)) { context in
-                                Label(preferences.text(event.statusKey(now: context.date)), systemImage: "clock")
-                                    .font(.callout).foregroundStyle(.secondary)
+                            Text(event.kind == .inAppPurchase ? event.productName : event.app.name)
+                                .font(.title3.weight(.semibold)).textSelection(.enabled)
+                            HStack(alignment: .firstTextBaseline, spacing: 12) {
+                                Text(event.current.formatted(locale: preferences.locale))
+                                    .font(.system(size: 38, weight: .semibold, design: .rounded)).monospacedDigit()
+                                if event.previous.amount > 0 && event.current.amount == 0 {
+                                    Text(event.previous.formatted(locale: preferences.locale))
+                                        .font(.title3).strikethrough().foregroundStyle(.secondary)
+                                }
                             }
-                            if monitor.watch(for: event.app.id)?.isEnabled != true || !monitor.state.automaticChecks {
-                                Label(preferences.text("monitor.notChecking"), systemImage: "pause.circle")
-                                    .font(.caption).foregroundStyle(.secondary)
+                            Divider()
+                            HStack {
+                                Label(preferences.text("monitor.observed"), systemImage: "clock")
+                                Spacer()
+                                Text(event.current.observedAt, format: .dateTime.month().day().hour().minute())
+                            }.font(.caption).foregroundStyle(.secondary)
+                        }
+                        if monitor.watch(for: event.app.id)?.isEnabled != true || !monitor.state.automaticChecks {
+                            Label(preferences.text("monitor.notChecking"), systemImage: "pause.circle")
+                                .font(.callout).foregroundStyle(.secondary)
+                        }
+                        DetailCard {
+                            DisclosureGroup {
+                                VStack(alignment: .leading, spacing: 14) {
+                                    LabeledContent(preferences.text("monitor.detected")) {
+                                        Text(event.discoveredAt, format: .dateTime.year().month().day().hour().minute())
+                                    }
+                                    Text(preferences.text(event.kind == .inAppPurchase ? "monitor.iapNotice" : "monitor.priceNotice"))
+                                        .foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                                }.font(.callout).padding(.top, 12)
+                            } label: {
+                                Label(preferences.text("monitor.offerDetails"), systemImage: "info.circle").font(.headline)
                             }
                         }
-                        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.035), in: Radius.shape(Radius.surface))
-                        VStack(spacing: 12) {
-                            LabeledContent(preferences.text("monitor.region"), value: regionName(event.app.country))
-                            LabeledContent(preferences.text("monitor.detected")) { Text(event.discoveredAt, style: .date) }
-                            LabeledContent(preferences.text("monitor.confirmed")) { Text(event.confirmedAt, format: .dateTime.month().day().hour().minute()) }
-                            LabeledContent(preferences.text("monitor.observed")) { Text(event.current.observedAt, format: .dateTime.month().day().hour().minute()) }
-                            LabeledContent(preferences.text("monitor.current"), value: event.current.formatted(locale: preferences.locale))
-                        }.font(.callout)
-                        Text(preferences.text(event.kind == .inAppPurchase ? "monitor.iapNotice" : "monitor.priceNotice"))
-                            .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                        Link(destination: event.app.storeURL) {
-                            Label(preferences.text("info.viewStore"), systemImage: "arrow.up.right")
-                        }.buttonStyle(.borderedProminent)
-                        HStack {
-                            Button(preferences.text(event.isUnread ? "monitor.read" : "monitor.unread")) {
-                                Task { await monitor.markRead([event.id], read: event.isUnread) }
-                            }
-                            Button(preferences.text(event.archivedAt == nil ? "monitor.archive" : "monitor.unarchive")) {
-                                Task { await monitor.archive(event.id, archived: event.archivedAt == nil) }
-                            }
-                        }.buttonStyle(.bordered).disabled(!monitor.writable)
                     }
-                    .padding(24).frame(maxWidth: 680, alignment: .leading).frame(maxWidth: .infinity)
-                }
+                    .padding(PageStyle.inset).frame(maxWidth: PageStyle.width, alignment: .leading).frame(maxWidth: .infinity)
+                }.id(event.id)
             } else {
                 EmptyState(symbol: "bell", title: preferences.text("monitor.select"), message: preferences.text("monitor.select.help"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -333,10 +354,23 @@ struct PriceReminderDetail: View {
         }.background(Color(nsColor: .windowBackgroundColor))
     }
 
-    private func regionName(_ code: String) -> String {
-        (preferences.locale.localizedString(forRegionCode: code.uppercased()) ?? code.uppercased()) + " · " + eventPlatform
+    @ViewBuilder private func actions(_ event: FreePriceEvent) -> some View {
+        Link(destination: event.app.storeURL) {
+            Label(preferences.text("info.viewStore"), systemImage: "arrow.up.right")
+        }.buttonStyle(.borderedProminent)
+        Button {
+            Task { await monitor.markRead([event.id], read: event.isUnread) }
+        } label: {
+            Label(preferences.text(event.isUnread ? "monitor.read" : "monitor.unread"),
+                  systemImage: event.isUnread ? "envelope.open" : "envelope.badge")
+        }.buttonStyle(.bordered).disabled(!monitor.writable)
+        Button {
+            Task { await monitor.archive(event.id, archived: event.archivedAt == nil) }
+        } label: {
+            Label(preferences.text(event.archivedAt == nil ? "monitor.archive" : "monitor.unarchive"),
+                  systemImage: "archivebox")
+        }.buttonStyle(.bordered).disabled(!monitor.writable)
     }
-    private var eventPlatform: String { event?.app.platform == "mac-software" ? "Mac" : "iPhone / iPad" }
 }
 
 struct PriceWatchList: View {
@@ -410,89 +444,32 @@ struct PriceWatchDetail: View {
     let watchID: String?
     @State private var editing: PriceWatch?
     private var watch: PriceWatch? { watchID.flatMap(monitor.watch(for:)) }
+
     var body: some View {
         Group {
             if let watch {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 22) {
-                        HStack(spacing: 14) {
-                            AppIcon(app: watch.app.entry, size: 58)
-                            VStack(alignment: .leading, spacing: 6) {
-                                Text(watch.app.name).font(.title2.weight(.semibold))
-                                Text((preferences.locale.localizedString(forRegionCode: watch.app.country.uppercased()) ?? watch.app.country.uppercased()) + " · " + (watch.app.platform == "mac-software" ? "Mac" : "iPhone / iPad"))
-                                    .font(.callout).foregroundStyle(.secondary)
-                            }
-                        }
-                        HStack(spacing: 8) {
-                            if watch.watchesApplication { PriceKindBadge(kind: .application, isScope: true) }
-                            if watch.watchesPurchases { PriceKindBadge(kind: .inAppPurchase, isScope: true) }
-                        }
-                        if !watch.isEnabled { Text(preferences.text("monitor.paused")).font(.callout).foregroundStyle(.secondary) }
-                        if !monitor.state.automaticChecks {
-                            Text(preferences.text("monitor.automatic.manualOnly")).font(.callout).foregroundStyle(.secondary)
-                        }
-                        if let report = monitor.watchReports[watch.id] { PriceRefreshFeedback(report: report) }
-                        if watch.applicationStatus == nil || (watch.watchesPurchases && watch.purchaseStatus == nil) {
-                            Text(preferences.text("monitor.source.legacy")).font(.caption).foregroundStyle(.secondary)
-                        }
-                        VStack(alignment: .leading, spacing: 12) {
-                            Text(preferences.text("monitor.latestPrices")).font(.headline)
-                            ForEach(watch.products.filter { ($0.kind == .application && watch.watchesApplication) || ($0.kind == .inAppPurchase && watch.watchesPurchases && watch.purchaseSnapshot == nil) }) { product in
-                                HStack(alignment: .firstTextBaseline) {
-                                    Label(product.kind == .application ? preferences.text("monitor.scope.application") : product.name, systemImage: product.kind.symbol)
-                                    Spacer(minLength: 12)
-                                    Text(product.latest?.formatted(locale: preferences.locale) ?? preferences.text("monitor.unknown"))
-                                        .foregroundStyle(.secondary).monospacedDigit()
-                                }.font(.callout)
-                            }
-                            if watch.watchesPurchases, let snapshot = watch.purchaseSnapshot {
-                                PurchasePriceRows(watch: watch, snapshot: snapshot)
-                                Text(preferences.text("monitor.purchaseSnapshot", snapshot.purchases.count))
-                                    .font(.caption).foregroundStyle(.secondary)
-                            }
-                            if watch.watchesApplication {
-                                PriceSourceSummary(titleKey: "monitor.applicationObserved",
-                                    observedAt: watch.products.first(where: { $0.kind == .application })?.latest?.observedAt,
-                                    status: watch.applicationStatus)
-                            }
-                            if watch.watchesPurchases {
-                                PriceSourceSummary(titleKey: "monitor.purchaseObserved",
-                                    observedAt: watch.purchaseSnapshot?.observedAt, status: watch.purchaseStatus)
-                            }
-                            if watch.products.isEmpty && watch.purchaseSnapshot == nil { Text(preferences.text("monitor.unknown")).foregroundStyle(.secondary) }
-                        }
-                        .padding(18).frame(maxWidth: .infinity, alignment: .leading)
-                        .background(Color.primary.opacity(0.035), in: Radius.shape(Radius.surface))
-                        if watch.watchesPurchases {
-                            VStack(alignment: .leading, spacing: 8) {
-                                Text(preferences.text(watch.purchaseCoverageKey)).font(.headline)
-                                Text(preferences.text("monitor.purchaseCount", watch.purchaseCount)).font(.callout)
-                                Text(preferences.text("monitor.iapNotice")).font(.callout).foregroundStyle(.secondary)
-                            }
-                        }
-                        if let date = watch.lastSuccess {
-                            LabeledContent(preferences.text("monitor.lastSuccess")) {
-                                Text(date, format: .dateTime.month().day().hour().minute())
-                            }.font(.callout)
-                        }
-                        if watch.isEnabled && monitor.state.automaticChecks {
-                            LabeledContent(preferences.text("monitor.source.next")) {
-                                Text(watch.nextCheck, format: .dateTime.month().day().hour().minute())
-                            }.font(.caption).foregroundStyle(.secondary)
-                        }
-                        Text(preferences.text("monitor.runtime")).font(.callout).foregroundStyle(.secondary)
-                        Toggle(preferences.text("monitor.watchEnabled"), isOn: Binding(get: { watch.isEnabled }, set: { value in
-                            Task { await monitor.setEnabled(value, watchID: watch.id) }
-                        })).toggleStyle(.switch).disabled(!monitor.writable)
+                    VStack(alignment: .leading, spacing: 24) {
+                        MonitorDetailHeader(app: watch.app)
                         ViewThatFits {
-                            HStack { actions(watch) }
+                            HStack(spacing: 10) { actions(watch) }
                             VStack(alignment: .leading, spacing: 10) { actions(watch) }
-                        }.buttonStyle(.bordered)
-                        Button(preferences.text("monitor.unfollow"), role: .destructive) {
-                            Task { await monitor.remove(watchID: watch.id) }
-                        }.buttonStyle(.borderless).disabled(!monitor.writable)
-                    }.padding(24).frame(maxWidth: 680, alignment: .leading).frame(maxWidth: .infinity)
-                }
+                        }.controlSize(.large)
+                        if let report = monitor.watchReports[watch.id] {
+                            PriceRefreshFeedback(report: report)
+                        }
+                        prices(watch)
+                        monitoring(watch)
+                        DetailCard {
+                            DisclosureGroup {
+                                sourceDetails(watch).padding(.top, 12)
+                            } label: {
+                                Label(preferences.text("monitor.checkDetails"), systemImage: "info.circle").font(.headline)
+                            }
+                        }
+                    }
+                    .padding(PageStyle.inset).frame(maxWidth: PageStyle.width, alignment: .leading).frame(maxWidth: .infinity)
+                }.id(watch.id)
             } else {
                 EmptyState(symbol: "heart", title: preferences.text("monitor.watches.select"), message: preferences.text("monitor.watches.select.help"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -501,12 +478,113 @@ struct PriceWatchDetail: View {
         .background(Color(nsColor: .windowBackgroundColor))
         .sheet(item: $editing) { PriceWatchEditor(monitor: monitor, existing: $0) }
     }
+
+    private func prices(_ watch: PriceWatch) -> some View {
+        DetailCard {
+            Text(preferences.text("monitor.latestPrices")).font(.headline)
+            ForEach(watch.products.filter {
+                ($0.kind == .application && watch.watchesApplication) ||
+                ($0.kind == .inAppPurchase && watch.watchesPurchases && watch.purchaseSnapshot == nil)
+            }) { product in
+                HStack(alignment: .firstTextBaseline) {
+                    Label(product.kind == .application ? preferences.text("monitor.scope.application") : product.name,
+                          systemImage: product.kind.symbol)
+                    Spacer(minLength: 12)
+                    Text(product.latest?.formatted(locale: preferences.locale) ?? preferences.text("monitor.unknown"))
+                        .fontWeight(.medium).monospacedDigit()
+                }.font(.callout)
+            }
+            if watch.watchesPurchases, let snapshot = watch.purchaseSnapshot {
+                if watch.watchesApplication { Divider() }
+                HStack {
+                    Text(preferences.text("monitor.purchaseSection")).font(.caption.weight(.medium))
+                    Spacer()
+                    Text(preferences.text("monitor.purchaseItems", snapshot.purchases.count)).font(.caption)
+                }.foregroundStyle(.secondary)
+                PurchasePriceRows(watch: watch, snapshot: snapshot)
+            }
+            if watch.products.isEmpty && watch.purchaseSnapshot == nil {
+                Text(preferences.text("monitor.unknown")).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func monitoring(_ watch: PriceWatch) -> some View {
+        DetailCard {
+            Toggle(isOn: Binding(get: { watch.isEnabled }, set: { value in
+                Task { await monitor.setEnabled(value, watchID: watch.id) }
+            })) {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(preferences.text("monitor.watchEnabled")).font(.headline)
+                    Text(preferences.text(!watch.isEnabled ? "monitor.paused" :
+                        monitor.state.automaticChecks ? "monitor.schedule" : "monitor.automatic.manualOnly"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }.toggleStyle(.switch).disabled(!monitor.writable)
+            HStack(spacing: 8) {
+                if watch.watchesApplication { PriceKindBadge(kind: .application, isScope: true) }
+                if watch.watchesPurchases { PriceKindBadge(kind: .inAppPurchase, isScope: true) }
+            }
+            if let error = watch.errorKey {
+                Label(preferences.text(error), systemImage: "exclamationmark.triangle")
+                    .font(.callout).foregroundStyle(.orange)
+            } else if let date = watch.lastSuccess {
+                HStack {
+                    Label(preferences.text("monitor.lastChecked"), systemImage: "clock")
+                    Spacer()
+                    Text(date, format: .dateTime.month().day().hour().minute())
+                }.font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func sourceDetails(_ watch: PriceWatch) -> some View {
+        VStack(alignment: .leading, spacing: 16) {
+            if watch.applicationStatus == nil || (watch.watchesPurchases && watch.purchaseStatus == nil) {
+                Text(preferences.text("monitor.source.legacy")).font(.caption)
+            }
+            if watch.watchesApplication {
+                PriceSourceSummary(titleKey: "monitor.applicationObserved",
+                    observedAt: watch.products.first(where: { $0.kind == .application })?.latest?.observedAt,
+                    status: watch.applicationStatus)
+            }
+            if watch.watchesPurchases {
+                PriceSourceSummary(titleKey: "monitor.purchaseObserved",
+                    observedAt: watch.purchaseSnapshot?.observedAt, status: watch.purchaseStatus)
+                Text(preferences.text(watch.purchaseCoverageKey) + " · " + preferences.text("monitor.purchaseCount", watch.purchaseCount))
+                    .font(.caption)
+                Text(preferences.text("monitor.iapNotice")).font(.callout)
+            }
+            if watch.isEnabled && monitor.state.automaticChecks {
+                LabeledContent(preferences.text("monitor.source.next")) {
+                    Text(watch.nextCheck, format: .dateTime.month().day().hour().minute())
+                }.font(.caption)
+            }
+            Text(preferences.text("monitor.runtime")).font(.callout)
+        }.foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+    }
+
     @ViewBuilder private func actions(_ watch: PriceWatch) -> some View {
-        Link(preferences.text("info.viewStore"), destination: watch.app.storeURL)
-        Button(preferences.text("monitor.edit")) { editing = watch }.disabled(!monitor.writable)
-        Button(preferences.text("monitor.check")) { Task { await monitor.refresh(watchID: watch.id, force: true) } }
-            .disabled(!watch.isEnabled || !monitor.writable)
-            .accessibilityIdentifier("monitor.checkWatch")
+        Button {
+            Task { await monitor.refresh(watchID: watch.id, force: true) }
+        } label: {
+            Label(preferences.text(monitor.isChecking ? "monitor.refreshing" : "monitor.check"), systemImage: "arrow.clockwise")
+        }
+        .buttonStyle(.borderedProminent)
+        .disabled(!watch.isEnabled || !monitor.writable || monitor.isChecking)
+        .accessibilityIdentifier("monitor.checkWatch")
+        Link(destination: watch.app.storeURL) {
+            Label(preferences.text("info.viewStore"), systemImage: "arrow.up.right")
+        }.buttonStyle(.bordered)
+        Menu {
+            Button(preferences.text("monitor.edit")) { editing = watch }
+            Divider()
+            Button(preferences.text("monitor.unfollow"), role: .destructive) {
+                Task { await monitor.remove(watchID: watch.id) }
+            }
+        } label: {
+            Label(preferences.text("monitor.edit"), systemImage: "ellipsis")
+        }.menuStyle(.borderlessButton).fixedSize().disabled(!monitor.writable)
     }
 }
 
@@ -528,9 +606,9 @@ struct PriceWatchEditor: View {
     @State private var generation = UUID()
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 18) {
-            Text(preferences.text(existing == nil ? "monitor.add" : "monitor.edit")).font(.title2.weight(.semibold))
-            Text(preferences.text("monitor.add.help")).font(.callout).foregroundStyle(.secondary)
+        VStack(alignment: .leading, spacing: PageStyle.spacing) {
+            PageHeading(title: preferences.text(existing == nil ? "monitor.add" : "monitor.edit"),
+                subtitle: preferences.text("monitor.add.help"), symbol: "heart")
             VStack(alignment: .leading, spacing: 8) {
                 TextField(preferences.text("monitor.link"), text: $link).textFieldStyle(.roundedBorder)
                     .disabled(existing != nil || saving).accessibilityIdentifier("monitor.link")
@@ -563,8 +641,7 @@ struct PriceWatchEditor: View {
                         Text(preferences.text(result.purchaseCoverageKey) + " · " + preferences.text("monitor.purchaseCount", result.purchaseCount))
                             .font(.caption).foregroundStyle(.secondary)
                     }
-                }.padding(14).frame(maxWidth: .infinity, alignment: .leading)
-                .background(Color.primary.opacity(0.04), in: Radius.shape(Radius.group))
+                }.padding(20).frame(maxWidth: .infinity, alignment: .leading).elevatedCard()
             }
             HStack(spacing: 24) {
                 Toggle(isOn: $application) { Label(preferences.text("monitor.watching.application"), systemImage: PriceKind.application.symbol) }
@@ -584,7 +661,7 @@ struct PriceWatchEditor: View {
                     .accessibilityIdentifier("monitor.save")
             }
         }
-        .padding(24).frame(width: 530)
+        .padding(PageStyle.inset).frame(width: 570)
         .background(Color(nsColor: .windowBackgroundColor))
         .onAppear {
             if let existing {

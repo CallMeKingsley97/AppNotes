@@ -508,20 +508,20 @@ struct NoteEditorView: View {
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 20) {
+            VStack(alignment: .leading, spacing: PageStyle.spacing) {
                 editor
                 if note.isEmpty, let suggestion = suggestionStore.suggestion(for: app.path) {
                     suggestionCard(suggestion)
                 }
             }
-            .padding(28)
-            .frame(maxWidth: 780, alignment: .leading)
+            .padding(PageStyle.inset)
+            .frame(maxWidth: PageStyle.width, alignment: .leading)
             .frame(maxWidth: .infinity)
         }
     }
 
     private var editor: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        DetailCard {
             HStack {
                 Label(preferences.text("detail.note"), systemImage: "square.and.pencil").font(.headline)
                 Spacer()
@@ -570,11 +570,7 @@ struct NoteEditorView: View {
                 Text(suggestion.seller).font(.caption).foregroundStyle(.tertiary).lineLimit(1)
             }
         }
-        .padding(16)
-        .background(Color.accentColor.opacity(0.055), in: Radius.shape(Radius.group))
-        .overlay {
-            Radius.shape(Radius.group).strokeBorder(Color.accentColor.opacity(0.12), lineWidth: 1)
-        }
+        .padding(20).elevatedCard()
     }
 
 }
