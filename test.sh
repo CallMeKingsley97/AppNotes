@@ -11,7 +11,7 @@ xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
 Build/Tests/PreferencesTests "$PWD/Build/AppNotes.app"
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   -module-cache-path Build/ModuleCache \
-  Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift Tests/DetailsFixtures.swift Tests/AppDetailsTests.swift \
+  Sources/AppVersion.swift Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift Tests/DetailsFixtures.swift Tests/AppDetailsTests.swift \
   -o Build/Tests/AppDetailsTests
 Build/Tests/AppDetailsTests
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
@@ -21,19 +21,19 @@ xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
 Build/Tests/CustomCategoryTests
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   -module-cache-path Build/ModuleCache \
-  Sources/AppleRequestQueue.swift Sources/Models.swift Sources/Preferences.swift Sources/ManualImport.swift Tests/ManualImportTests.swift \
+  Sources/AppVersion.swift Sources/AppleRequestQueue.swift Sources/Models.swift Sources/Preferences.swift Sources/ManualImport.swift Tests/ManualImportTests.swift \
   -o Build/Tests/ManualImportTests
 Build/Tests/ManualImportTests
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   -module-cache-path Build/ModuleCache \
-  Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift \
+  Sources/AppVersion.swift Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift \
   Sources/PriceModels.swift Sources/PriceClient.swift Sources/PriceMonitorStore.swift \
   Tests/DetailsFixtures.swift Tests/PriceFixtures.swift Tests/PriceMonitoringTests.swift \
   -o Build/Tests/PriceMonitoringTests
 Build/Tests/PriceMonitoringTests
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   -module-cache-path Build/ModuleCache \
-  Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift \
+  Sources/AppVersion.swift Sources/AppleRequestQueue.swift Sources/Models.swift Sources/AppDetails.swift \
   Sources/PriceModels.swift Sources/PriceClient.swift Sources/PriceMonitorStore.swift \
   Tests/DetailsFixtures.swift Tests/PriceFixtures.swift Tests/MonitorReliabilityTests.swift \
   -o Build/Tests/MonitorReliabilityTests

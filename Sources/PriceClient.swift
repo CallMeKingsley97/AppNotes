@@ -39,7 +39,7 @@ struct AppStorePriceClient: PriceLoading {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 20
         configuration.timeoutIntervalForResource = 30
-        configuration.httpAdditionalHeaders = ["User-Agent": "AppNotes/1.0 (macOS; Price monitoring)"]
+        configuration.httpAdditionalHeaders = ["User-Agent": "AppNotes/\(AppVersion.current) (macOS; Price monitoring)"]
         self.session = session ?? URLSession(configuration: configuration)
         self.queue = queue
     }

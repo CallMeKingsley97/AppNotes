@@ -82,6 +82,15 @@ test.sh                  测试脚本
 package.sh               DMG 打包脚本
 ```
 
+## 发布
+
+推送 `v*` 标签会触发 GitHub Actions 构建并上传 DMG 到对应的 GitHub Release。打包脚本优先从标签提取版本号（CI 中读取 `GITHUB_REF_NAME`，本地读取当前提交上的精确标签），无标签时回退到 `Info.plist`，并把该版本写入应用包，保证 DMG 文件名与应用内版本一致。
+
+```sh
+git tag v1.3
+git push origin v1.3
+```
+
 ## 数据与隐私
 
 应用备注、分类和偏好保存在本机。商店资料按 App ID / Bundle ID 匹配，来自 Apple lookup 接口和公开 App Store 页面，并按地区与界面语言缓存 24 小时。「最近更新」优先使用应用安装时记录的商店地区；当该地区页面不可用时，会继续尝试其他可用地区，避免误显示为空记录。

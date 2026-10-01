@@ -242,7 +242,7 @@ struct AppStoreLinkLookup {
         let configuration = URLSessionConfiguration.ephemeral
         configuration.timeoutIntervalForRequest = 12
         configuration.timeoutIntervalForResource = 20
-        configuration.httpAdditionalHeaders = ["User-Agent": "AppNotes/1.0 (macOS; App information)"]
+        configuration.httpAdditionalHeaders = ["User-Agent": "AppNotes/\(AppVersion.current) (macOS; App information)"]
         return URLSession(configuration: configuration)
     }
 }

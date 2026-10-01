@@ -205,7 +205,7 @@ actor AppStoreDetailsClient: AppDetailsLoading {
             let configuration = URLSessionConfiguration.ephemeral
             configuration.timeoutIntervalForRequest = 18
             configuration.timeoutIntervalForResource = 30
-            configuration.httpAdditionalHeaders = ["User-Agent": "AppNotes/1.0 (macOS; App information)"]
+            configuration.httpAdditionalHeaders = ["User-Agent": "AppNotes/\(AppVersion.current) (macOS; App information)"]
             self.session = URLSession(configuration: configuration)
         }
     }
