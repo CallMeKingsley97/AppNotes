@@ -92,7 +92,13 @@ struct StorePageDetails: Codable, Equatable, Sendable {
             let children = item["items"] as? [[String: Any]] ?? []
             if ["app内购买", "in-apppurchases"].contains(title) {
                 for child in children {
-                    for pair in child["textPairs"] as? [[String]] ?? [] {
+                    // Apple now emits individual textPair nodes; older pages group
+                    // pairs inside textPairs. Keep both within this product's shelf.
+                    var pairs = child["textPairs"] as? [[String]] ?? []
+                    if child["$kind"] as? String == "textPair", let name = child["leadingText"] as? String {
+                        pairs.append([name, child["trailingText"] as? String ?? ""])
+                    }
+                    for pair in pairs {
                         guard let name = pair.first, !name.isEmpty else { continue }
                         let price = pair.count == 2 ? pair[1] : ""
                         if includeIncompletePurchases || !price.isEmpty {
@@ -104,6 +110,15 @@ struct StorePageDetails: Codable, Equatable, Sendable {
                 for child in children {
                     if let text = child["text"] as? String, !text.isEmpty {
                         requirements.append(AppRequirement(platform: child["heading"] as? String ?? "", text: text))
+                    } else if let linkable = child["linkableText"] as? [String: Any],
+                              let styled = linkable["styledText"] as? [String: Any],
+                              let raw = styled["rawText"] as? String, !raw.isEmpty {
+                        let lines = raw.split(separator: "\n", maxSplits: 1).map(String.init)
+                        if lines.count == 2, lines[0].hasPrefix("**"), lines[0].hasSuffix("**") {
+                            requirements.append(AppRequirement(platform: String(lines[0].dropFirst(2).dropLast(2)), text: lines[1]))
+                        } else {
+                            requirements.append(AppRequirement(platform: "", text: raw))
+                        }
                     }
                 }
             }
@@ -180,7 +195,7 @@ struct AppDetails: Codable, Equatable, Sendable {
     let page: StorePageDetails?
     let schemaVersion: Int?
 
-    static let currentSchemaVersion = 2
+    static let currentSchemaVersion = 3
 
     var storeURL: URL { listing.storeURL(country: country, language: language) }
 }
@@ -309,6 +324,7 @@ final class AppDetailsStore: ObservableObject {
         if !force {
             if let cached = records[key],
                cached.schemaVersion == AppDetails.currentSchemaVersion,
+               cached.page != nil,
                now().timeIntervalSince(cached.fetchedAt) < 86_400 { return }
             if failedAttempts.contains(key) { return }
         }
@@ -319,6 +335,14 @@ final class AppDetailsStore: ObservableObject {
             let details = try await loader.fetch(app: app, country: Self.country(for: app, language: language), language: language)
             try Task.checkCancellation()
             guard details.listing.matches(app) else { throw AppDetailsError.notFound }
+            if details.page == nil {
+                // A successful lookup can accompany a failed/limited public page.
+                // Keep the complete previous snapshot and its honest timestamp.
+                if records[key]?.page == nil { records[key] = details; save() }
+                errors[key] = "info.pageUnavailable"
+                failedAttempts.insert(key)
+                return
+            }
             records[key] = details
             failedAttempts.remove(key)
             save()

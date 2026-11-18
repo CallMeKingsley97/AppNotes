@@ -97,7 +97,7 @@ struct ManagerView: View {
                     EmptyState(symbol: "note.text", title: preferences.text("detail.empty"),
                                message: preferences.text("detail.empty.help"))
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(Color(nsColor: .textBackgroundColor))
+                        .background(AppSurface.canvas)
                         .transition(.opacity)
                 }
             }
@@ -151,6 +151,7 @@ struct ManagerView: View {
             }
         }
         .onChange(of: query) { _, _ in reconcileSelection() }
+        .onChange(of: store.notes) { _, _ in reconcileSelection() }
         .onChange(of: library.apps) { _, _ in reconcileSelection() }
         .onChange(of: categoryStore.memberships) { _, _ in reconcileSelection() }
         .onChange(of: categoryStore.categories) { _, _ in
@@ -200,20 +201,20 @@ struct ManagerView: View {
                 Section(preferences.text("monitor.title")) {
                     HStack {
                         Label { Text(preferences.text("monitor.reminders")) } icon: {
-                            Image(systemName: "bell").foregroundStyle(filter == "monitor:reminders" ? Color.primary : Color.accentColor)
+                            Image(systemName: "bell").foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)
                         if monitor.unreadCount > 0 {
-                            Text(monitor.unreadCount, format: .number).font(.caption).monospacedDigit()
+                            CountBadge(count: monitor.unreadCount, emphasized: true)
                         }
                     }.padding(.vertical, 3).tag("monitor:reminders")
                         .accessibilityIdentifier("monitor.reminders")
                     HStack {
                         Label { Text(preferences.text("monitor.watches")) } icon: {
-                            Image(systemName: "heart").foregroundStyle(filter == "monitor:watches" ? Color.primary : Color.accentColor)
+                            Image(systemName: "heart").foregroundStyle(.secondary)
                         }
                         Spacer(minLength: 4)
-                        Text(monitor.state.watches.count, format: .number).font(.caption).foregroundStyle(.secondary)
+                        CountBadge(count: monitor.state.watches.count)
                     }.padding(.vertical, 3).tag("monitor:watches")
                         .accessibilityIdentifier("monitor.watches")
                 }
@@ -228,15 +229,17 @@ struct ManagerView: View {
                 }
             }
             .listStyle(.sidebar)
+            .scrollContentBackground(.hidden)
+            .font(.system(size: 12))
             .safeAreaInset(edge: .top, spacing: 0) {
                 HStack(spacing: 10) {
-                    Image(systemName: "note.text")
-                        .font(.title3.weight(.medium))
-                        .foregroundStyle(Color.accentColor)
-                        .frame(width: 34, height: 34)
-                        .background(Color.accentColor.opacity(0.1), in: Radius.shape(Radius.group))
+                    Image(systemName: "square.stack.3d.up")
+                        .font(.system(size: 21, weight: .regular))
+                        .foregroundStyle(AppSurface.ink)
+                        .frame(width: 28, height: 34)
+                        .accessibilityHidden(true)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("AppNotes").font(.headline)
+                        Text("AppNotes").font(.system(size: 15, weight: .semibold))
                         Text(preferences.text("app.title")).font(.caption).foregroundStyle(.secondary)
                     }
                     Spacer(minLength: 0)
@@ -244,6 +247,17 @@ struct ManagerView: View {
                 .padding(16)
             }
             Divider()
+            Button(action: onSettings) {
+                HStack {
+                    Label(preferences.text("settings.title"), systemImage: "gearshape")
+                    Spacer(minLength: 4)
+                    Text("⌘,").foregroundStyle(.tertiary)
+                }
+                .font(.system(size: 12)).padding(.horizontal, 16).padding(.top, 12).padding(.bottom, 8)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(QuietPressButtonStyle())
+            .accessibilityIdentifier("navigation.settings")
             Button(action: onSearch) {
                 HStack {
                     Label(preferences.text("menu.search"), systemImage: "magnifyingglass")
@@ -251,12 +265,13 @@ struct ManagerView: View {
                     Text("⌃⌥N").foregroundStyle(.tertiary)
                 }
                 .font(.caption)
-                .padding(16)
+                .padding(.horizontal, 16).padding(.top, 8).padding(.bottom, 14)
                 .contentShape(Rectangle())
             }
             .buttonStyle(QuietPressButtonStyle(cornerRadius: 0))
             .foregroundStyle(.secondary)
         }
+        .background(AppSurface.canvas)
     }
 
     private func filterRow(_ item: LibraryFilter) -> some View {
@@ -264,29 +279,21 @@ struct ManagerView: View {
             Label {
                 Text(preferences.text(item.titleKey))
             } icon: {
-                if filter == item.rawValue {
-                    Image(systemName: item.symbol).foregroundStyle(.primary)
-                } else {
-                    Image(systemName: item.symbol).foregroundStyle(Color.accentColor)
-                }
+                Image(systemName: item.symbol).foregroundStyle(.secondary)
             }
             Spacer(minLength: 4)
-            Text(library.apps.filter { item.contains($0, store: store) }.count, format: .number)
-                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            CountBadge(count: library.apps.filter { item.contains($0, store: store) }.count)
         }
         .padding(.vertical, 3)
-        .listItemTint(.accentColor)
         .tag(item.rawValue)
     }
 
     private func customCategoryRow(_ category: CustomAppCategory) -> some View {
-        let selected = filter == "custom:\(category.id.uuidString)"
         return HStack {
-            Image(systemName: "folder").foregroundStyle(selected ? Color.primary : Color.accentColor)
+            Image(systemName: "folder").foregroundStyle(.secondary)
             Text(category.name).lineLimit(1)
             Spacer(minLength: 4)
-            Text(categoryStore.apps(in: category, from: library.apps).count, format: .number)
-                .font(.caption).monospacedDigit().foregroundStyle(.secondary)
+            CountBadge(count: categoryStore.apps(in: category, from: library.apps).count)
         }
         .padding(.vertical, 3).tag("custom:\(category.id.uuidString)")
         .help(category.name)
@@ -304,7 +311,7 @@ struct ManagerView: View {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(alignment: .firstTextBaseline) {
                     Text(activeCustomCategory?.name ?? preferences.text(activeFilter?.titleKey ?? "library.all"))
-                        .font(.title3.weight(.semibold)).lineLimit(2)
+                        .font(.system(size: 17, weight: .semibold)).lineLimit(2)
                     Spacer(minLength: 6)
                     Text(preferences.text("library.count", filtered.count))
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit().fixedSize()
@@ -358,6 +365,7 @@ struct ManagerView: View {
                 }
             }
             .listStyle(.inset)
+            .scrollContentBackground(.hidden)
             .accessibilityLabel(preferences.text("library.list"))
             .overlay {
                 if library.isScanning && library.apps.isEmpty {
@@ -369,7 +377,7 @@ struct ManagerView: View {
             Divider()
             ManagerBottomBar(isScanning: library.isScanning, apps: library.apps, onReload: library.refresh)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppSurface.inset)
     }
 
     @ViewBuilder private var listEmptyState: some View {
@@ -378,6 +386,7 @@ struct ManagerView: View {
                 EmptyState(symbol: "magnifyingglass", title: preferences.text("search.noResults"),
                            message: preferences.text("search.tryAgain"), compact: true)
                 Button(preferences.text("search.clear")) { query = "" }
+                    .buttonStyle(AppActionStyle())
             } else if activeFilter == .manual {
                 EmptyState(symbol: "square.and.arrow.down", title: preferences.text("import.empty"),
                            message: preferences.text("import.empty.help"), compact: true)
@@ -389,7 +398,7 @@ struct ManagerView: View {
                 EmptyState(symbol: "folder", title: preferences.text("category.empty"),
                            message: preferences.text("category.emptyHelp"), compact: true)
                 Button(preferences.text("category.manage")) { managingCategory = category }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(AppActionStyle(.primary))
             } else {
                 EmptyState(symbol: activeFilter?.symbol ?? "folder", title: preferences.text("library.empty"),
                            message: preferences.text("library.empty.help"), compact: true)
@@ -554,7 +563,7 @@ struct NoteEditorView: View {
                       systemImage: "text.quote").font(.callout.weight(.medium))
                 Spacer(minLength: 0)
                 if suggestion.score < 0.85 {
-                    Text(preferences.text("suggestion.mismatch")).font(.caption).foregroundStyle(.orange)
+                    Text(preferences.text("suggestion.mismatch")).font(.caption).foregroundStyle(AppSurface.warning)
                 }
             }
             Text(suggestion.text).font(.callout).foregroundStyle(.secondary)
@@ -585,7 +594,7 @@ struct SidebarRow: View {
         HStack(spacing: 10) {
             AppIcon(app: app, size: 34)
             VStack(alignment: .leading, spacing: 4) {
-                Text(app.name).font(.body.weight(.medium)).lineLimit(1)
+                Text(app.name).font(.system(size: 13, weight: .medium)).lineLimit(1)
                 Text(note.isEmpty ? (suggestion?.text ?? preferences.text("detail.noNote")) : note)
                     .font(.caption).foregroundStyle(.secondary)
                     .lineLimit(1).frame(height: 15, alignment: .top)
@@ -596,6 +605,7 @@ struct SidebarRow: View {
             }
         }
         .padding(.vertical, 7)
+        .help(app.name)
         .accessibilityElement(children: .combine)
     }
 }

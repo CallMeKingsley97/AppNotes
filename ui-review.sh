@@ -6,7 +6,7 @@ REVIEW_APP="Build/UIReview.app"
 mkdir -p "$REVIEW_APP/Contents/MacOS" "$REVIEW_APP/Contents/Resources"
 xcrun swiftc -swift-version 5 -target arm64-apple-macosx15.0 \
   -module-cache-path Build/ModuleCache \
-  Sources/AppleRequestQueue.swift Sources/PriceModels.swift Sources/PriceClient.swift Sources/PriceMonitorStore.swift Sources/PriceViews.swift Sources/Preferences.swift Sources/Models.swift Sources/Fetcher.swift Sources/ManualImport.swift Sources/Components.swift Sources/Motion.swift \
+  Sources/AppVersion.swift Sources/AppleRequestQueue.swift Sources/PriceModels.swift Sources/PriceClient.swift Sources/PriceMonitorStore.swift Sources/PriceViews.swift Sources/Preferences.swift Sources/Models.swift Sources/Fetcher.swift Sources/ManualImport.swift Sources/Components.swift Sources/Motion.swift \
   Sources/AppDetails.swift Sources/DetailView.swift Sources/CategoryViews.swift \
   Sources/Views.swift Sources/SettingsView.swift Sources/OverlayViews.swift Tests/DetailsFixtures.swift Tests/PriceFixtures.swift Tests/UIReview.swift \
   -o "$REVIEW_APP/Contents/MacOS/UIReview"

@@ -86,7 +86,7 @@ struct SearchOverlayView: View {
         .frame(width: 580, height: 430)
         .background(.regularMaterial, in: Radius.shape(Radius.surface))
         .overlay {
-            Radius.shape(Radius.surface).strokeBorder(.primary.opacity(0.1), lineWidth: 1)
+            Radius.shape(Radius.surface).strokeBorder(AppSurface.line, lineWidth: 1)
                 .allowsHitTesting(false)
         }
         .clipShape(Radius.shape(Radius.surface))
@@ -144,7 +144,7 @@ struct ResultRow: View {
             .padding(10).contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .background(isHighlighted ? Color.accentColor.opacity(0.14) : (isHovered ? Color.primary.opacity(0.04) : .clear),
+        .background(isHighlighted ? AppSurface.hover : (isHovered ? AppSurface.pill : .clear),
                     in: Radius.shape(Radius.group))
         .onHover { isHovered = $0 }
         .accessibilityElement(children: .combine)
@@ -203,7 +203,7 @@ struct HUDView: View {
             if let appPath = content.appPath {
                 Image(nsImage: IconCache.icon(for: appPath)).resizable().frame(width: 36, height: 36)
             } else {
-                Image(systemName: "note.text").font(.title2).foregroundStyle(Color.accentColor)
+                Image(systemName: "note.text").font(.title2).foregroundStyle(AppSurface.ink)
             }
             VStack(alignment: .leading, spacing: 5) {
                 HStack {
@@ -220,7 +220,8 @@ struct HUDView: View {
         .padding(16).frame(width: 390, alignment: .leading)
         .background(.regularMaterial, in: Radius.shape(Radius.surface))
         .overlay {
-            Radius.shape(Radius.surface).strokeBorder(.primary.opacity(0.1), lineWidth: 1)
+            Radius.shape(Radius.surface).strokeBorder(AppSurface.line, lineWidth: 1)
+                .allowsHitTesting(false)
         }
         .fixedSize(horizontal: false, vertical: true)
         .motionCrossfade(id: content.identity)

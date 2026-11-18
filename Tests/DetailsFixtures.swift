@@ -27,7 +27,8 @@ enum DetailsFixtures {
 
     static func pageHTML(listing: StoreListing, language: String = "zh-Hans", purchases: Bool? = true,
                          includeList: Bool = true, country: String = "cn",
-                         intentPlatform: String? = "mac", appPlatforms: [String] = ["mac"]) throws -> String {
+                         intentPlatform: String? = "mac", appPlatforms: [String] = ["mac"],
+                         modernAnnotations: Bool = false) throws -> String {
         let chinese = language == "zh-Hans"
         var offer: [String: Any] = [:]
         if let purchases { offer["hasInAppPurchases"] = purchases }
@@ -36,6 +37,15 @@ enum DetailsFixtures {
             : []
         var intent = ["id": String(listing.trackId), "storefront": country, "language": chinese ? "zh-Hans" : "en-GB"]
         intent["platform"] = intentPlatform
+        let compatibility = chinese
+            ? "需要 macOS 14.0 或更高版本以及装有 Apple M1 或更高版本芯片的 Mac。"
+            : "Requires macOS 14.0 or later and a Mac with Apple M1 chip or later."
+        let compatibilityItems: [[String: Any]] = modernAnnotations
+            ? [["$kind": "linkableText", "linkableText": ["styledText": ["rawText": "**Mac**\n" + compatibility]]]]
+            : [["heading": "Mac", "text": compatibility]]
+        let purchaseItems: [[String: Any]] = modernAnnotations
+            ? pairs.map { ["$kind": "textPair", "leadingText": $0[0], "trailingText": $0[1]] }
+            : [["textPairs": pairs]]
         let page: [String: Any] = [
             "intent": intent,
             "data": [
@@ -45,10 +55,8 @@ enum DetailsFixtures {
                 "shelfMapping": [
                     "information": ["items": [
                         ["title": chinese ? "兼容性" : "Compatibility",
-                         "items": [["heading": "Mac", "text": chinese
-                                    ? "需要 macOS 14.0 或更高版本以及装有 Apple M1 或更高版本芯片的 Mac。"
-                                    : "Requires macOS 14.0 or later and a Mac with Apple M1 chip or later."]]],
-                        ["title": chinese ? "App内购买" : "In-App Purchases", "items": [["textPairs": pairs]]]
+                         "items": compatibilityItems],
+                        ["title": chinese ? "App内购买" : "In-App Purchases", "items": purchaseItems]
                     ]]
                 ]
             ]

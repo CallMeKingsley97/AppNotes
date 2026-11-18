@@ -87,6 +87,7 @@ struct AppRoot<Content: View>: View {
             .environment(\.locale, preferences.locale)
             // Inherit NSApp.appearance through the hosting view. A second SwiftUI
             // override can retain the previous scheme when switching back to System.
-            .tint(.accentColor)
+            .tint(.primary)
+            .font(.system(size: 13))
     }
 }

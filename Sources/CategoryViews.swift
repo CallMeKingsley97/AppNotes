@@ -86,10 +86,10 @@ private struct CategoryPickerPanel: View {
                         .font(.callout.weight(.medium))
                     Spacer(minLength: 0)
                 }
-                .foregroundStyle(Color.accentColor)
+                .foregroundStyle(AppSurface.ink)
                 .padding(.horizontal, 10)
                 .padding(.vertical, 8)
-                .background(Color.accentColor.opacity(0.08), in: Radius.shape(Radius.control))
+                .background(AppSurface.pill, in: Radius.shape(Radius.control))
                 .contentShape(Radius.shape(Radius.control))
             }
             .buttonStyle(.plain)
@@ -109,7 +109,7 @@ private struct CategoryPickerRow: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var isHovering = false
 
-    private var emblemTint: Color { isSelected ? .accentColor : .secondary }
+    private var emblemTint: Color { isSelected ? AppSurface.ink : .secondary }
 
     var body: some View {
         Button(action: action) {
@@ -129,15 +129,14 @@ private struct CategoryPickerRow: View {
 
                 Image(systemName: "checkmark")
                     .font(.system(size: 11, weight: .semibold))
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(AppSurface.ink)
                     .opacity(isSelected ? 1 : 0)
             }
             .padding(.horizontal, 9)
             .padding(.vertical, 7)
             .background(
                 Radius.shape(Radius.control)
-                    .fill(isSelected ? Color.accentColor.opacity(isHovering ? 0.13 : 0.09)
-                                        : Color.primary.opacity(isHovering ? 0.05 : 0.02))
+                    .fill(isSelected || isHovering ? AppSurface.pill : AppSurface.card)
             )
             .contentShape(Radius.shape(Radius.control))
         }
@@ -147,6 +146,7 @@ private struct CategoryPickerRow: View {
         .animation(Motion.content(reduced: reduceMotion), value: isSelected)
         .accessibilityLabel(category.name)
         .accessibilityValue(isSelected ? "1" : "0")
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -202,14 +202,15 @@ struct CategoryEditor: View {
             }
             HStack {
                 Spacer()
-                Button(preferences.text("fetch.cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                Button(preferences.text("fetch.cancel")) { dismiss() }
+                    .buttonStyle(AppActionStyle()).keyboardShortcut(.cancelAction)
                 Button(preferences.text(category == nil ? "category.create" : "category.save"), action: save)
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(AppActionStyle(.primary)).keyboardShortcut(.defaultAction)
                     .disabled(validation != nil).accessibilityIdentifier("category.save")
             }
         }
         .padding(PageStyle.inset).frame(width: 460)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppSurface.canvas)
         .onAppear { focused = true }
     }
 
@@ -278,6 +279,7 @@ struct CategoryAppsEditor: View {
                 }
             }
             .listStyle(.inset)
+            .scrollContentBackground(.hidden)
             .overlay {
                 if visibleApps.isEmpty {
                     EmptyState(symbol: "magnifyingglass", title: preferences.text("search.noResults"),
@@ -293,17 +295,18 @@ struct CategoryAppsEditor: View {
                     Text(preferences.text("category.selectedCount", library.apps.filter { selectedPaths.contains($0.path) }.count))
                         .font(.caption).foregroundStyle(.secondary).monospacedDigit()
                     Spacer()
-                    Button(preferences.text("fetch.cancel")) { dismiss() }.keyboardShortcut(.cancelAction)
+                    Button(preferences.text("fetch.cancel")) { dismiss() }
+                        .buttonStyle(AppActionStyle()).keyboardShortcut(.cancelAction)
                     Button(preferences.text("category.save")) {
                         if store.update(category, apps: library.apps, selectedPaths: selectedPaths) { dismiss() }
                     }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
+                    .buttonStyle(AppActionStyle(.primary)).keyboardShortcut(.defaultAction)
                     .accessibilityIdentifier("category.saveApps")
                 }
             }
             .padding(20)
         }
         .frame(width: 540, height: 560)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppSurface.canvas)
     }
 }

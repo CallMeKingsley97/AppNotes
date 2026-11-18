@@ -38,7 +38,7 @@ struct SettingsView: View {
                     )).toggleStyle(.switch).disabled(!monitor.writable)
                     Text(preferences.text("monitor.runtime"))
                         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-                    Button(preferences.text("monitor.watches"), action: onManageWatches).buttonStyle(.bordered)
+                    Button(preferences.text("monitor.watches"), action: onManageWatches).buttonStyle(AppActionStyle())
                     MonitorFeedback(monitor: monitor)
                 }
                 DetailCard {
@@ -60,7 +60,7 @@ struct SettingsView: View {
             }.padding(PageStyle.inset)
         }
         .frame(width: 520, height: 620)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppSurface.canvas)
     }
 
     private func appearanceOption(_ appearance: AppAppearance) -> some View {
@@ -73,15 +73,15 @@ struct SettingsView: View {
                     .frame(height: 66)
                     .overlay {
                         Radius.shape(Radius.group)
-                            .strokeBorder(selected ? Color.accentColor : Color.primary.opacity(0.12),
+                            .strokeBorder(selected ? AppSurface.ink : AppSurface.line,
                                           lineWidth: selected ? 2 : 1)
                     }
                 HStack(spacing: 5) {
-                    Image(systemName: appearance.symbol)
+                    Image(systemName: selected ? "checkmark.circle.fill" : appearance.symbol)
                     Text(preferences.text("appearance.\(appearance.rawValue)"))
                 }
                 .font(.callout)
-                .foregroundStyle(selected ? Color.accentColor : .primary)
+                .foregroundStyle(selected ? AppSurface.ink : AppSurface.secondary)
             }
             .frame(maxWidth: .infinity)
             .contentShape(Rectangle())
@@ -118,12 +118,12 @@ private struct AppearancePreview: View {
                 HStack(spacing: 3) {
                     ForEach(0..<3) { _ in Circle().fill(dark ? .white.opacity(0.3) : .black.opacity(0.2)).frame(width: 4, height: 4) }
                 }
-                Radius.shape(2).fill(Color.accentColor.opacity(0.7)).frame(height: 6)
+                Radius.shape(2).fill(dark ? Color(white: 0.50) : Color(white: 0.72)).frame(height: 6)
                 Radius.shape(2).fill(dark ? .white.opacity(0.15) : .black.opacity(0.1)).frame(height: 4)
                 Spacer(minLength: 0)
             }
             .padding(8).frame(width: 42)
-            .background(dark ? Color(white: 0.19) : Color(white: 0.9))
+            .background(dark ? Color(red: 0.10, green: 0.10, blue: 0.12) : Color(red: 0.95, green: 0.95, blue: 0.96))
             VStack(alignment: .leading, spacing: 6) {
                 Radius.shape(2).fill(dark ? .white.opacity(0.65) : .black.opacity(0.45)).frame(width: 28, height: 5)
                 Radius.shape(2).fill(dark ? .white.opacity(0.12) : .black.opacity(0.07)).frame(height: 22)

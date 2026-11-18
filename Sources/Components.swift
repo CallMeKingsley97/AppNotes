@@ -2,9 +2,9 @@ import SwiftUI
 import AppKit
 
 enum Radius {
-    static let control: CGFloat = 6
+    static let control: CGFloat = 7
     static let group: CGFloat = 10
-    static let surface: CGFloat = 14
+    static let surface: CGFloat = 12
 
     static func shape(_ radius: CGFloat) -> RoundedRectangle {
         RoundedRectangle(cornerRadius: radius, style: .continuous)
@@ -12,40 +12,44 @@ enum Radius {
 }
 
 enum AppSurface {
-    static let card = Color(nsColor: NSColor(name: nil, dynamicProvider: cardColor))
+    // Resolve the surface palette against the hosting window so
+    // System / Light / Dark switches update every window without rebuilding it.
+    static let canvas = adaptive(0xf4f4f6, 0x1a1a1e)
+    static let card = adaptive(0xffffff, 0x232327)
+    static let inset = adaptive(0xf9f9fb, 0x1f1f23)
+    static let pill = adaptive(0xf1f1f4, 0x2d2d33)
+    static let hover = adaptive(0xe9e9ee, 0x36363d)
+    static let line = adaptive(0xe3e3e8, 0x333339)
+    static let subtleLine = adaptive(0xececf0, 0x2c2c32)
+    static let ink = adaptive(0x1c1c21, 0xededf1)
+    static let inverse = adaptive(0xffffff, 0x1a1a1e)
+    static let secondary = adaptive(0x63636b, 0xa1a1aa)
+    static let accent = adaptive(0x4f46e5, 0xa5b4fc)
+    static let success = adaptive(0x16804a, 0x6fd99b)
+    static let warning = adaptive(0x9a4b09, 0xf2b544)
 
-    /// `controlBackgroundColor` is white above the window in light mode, but darker than it in dark mode.
-    private static func cardColor(_ appearance: NSAppearance) -> NSColor {
-        var resolved = NSColor.controlBackgroundColor
-        appearance.performAsCurrentDrawingAppearance {
-            let window = NSColor.windowBackgroundColor.usingColorSpace(.sRGB) ?? .windowBackgroundColor
-            let control = NSColor.controlBackgroundColor.usingColorSpace(.sRGB) ?? .controlBackgroundColor
-            if luminance(control) + 0.01 >= luminance(window) {
-                resolved = control
-            } else {
-                resolved = window.blended(withFraction: 0.08, of: .white) ?? window
-            }
-        }
-        return resolved
-    }
-
-    private static func luminance(_ color: NSColor) -> CGFloat {
-        0.2126 * color.redComponent + 0.7152 * color.greenComponent + 0.0722 * color.blueComponent
+    private static func adaptive(_ light: UInt32, _ dark: UInt32) -> Color {
+        Color(nsColor: NSColor(name: nil) { appearance in
+            let hex = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua ? dark : light
+            return NSColor(srgbRed: CGFloat((hex >> 16) & 255) / 255,
+                           green: CGFloat((hex >> 8) & 255) / 255,
+                           blue: CGFloat(hex & 255) / 255, alpha: 1)
+        })
     }
 }
 
 /// Shared spacing and surfaces for detail pages and editors.
 enum PageStyle {
-    static let inset: CGFloat = 28
-    static let spacing: CGFloat = 24
+    static let inset: CGFloat = 24
+    static let spacing: CGFloat = 20
     static let width: CGFloat = 760
 }
 
 struct DetailCard<Content: View>: View {
     @ViewBuilder var content: () -> Content
     var body: some View {
-        VStack(alignment: .leading, spacing: 18, content: content)
-            .padding(20)
+        VStack(alignment: .leading, spacing: 16, content: content)
+            .padding(18)
             .frame(maxWidth: .infinity, alignment: .leading)
             .elevatedCard()
     }
@@ -57,15 +61,14 @@ struct PageHeading: View {
     let symbol: String
 
     var body: some View {
-        HStack(alignment: .top, spacing: 16) {
+        HStack(alignment: .top, spacing: 12) {
             Image(systemName: symbol)
-                .font(.system(size: 24, weight: .medium))
-                .foregroundStyle(Color.accentColor)
-                .frame(width: 56, height: 56)
-                .background(Color.accentColor.opacity(0.10), in: Radius.shape(12))
+                .font(.system(size: 20, weight: .regular))
+                .foregroundStyle(AppSurface.secondary)
+                .frame(width: 28, height: 30)
                 .accessibilityHidden(true)
             VStack(alignment: .leading, spacing: 7) {
-                Text(title).font(.title2.weight(.semibold))
+                Text(title).font(.system(size: 20, weight: .semibold))
                 Text(subtitle).font(.callout).foregroundStyle(.secondary)
             }.fixedSize(horizontal: false, vertical: true)
             Spacer(minLength: 0)
@@ -114,7 +117,7 @@ struct IconButtonChrome: ViewModifier {
         guard isEnabled else { return 0 }
         if isPressed { return 0.16 }
         if isHovering { return 0.10 }
-        return 0.06
+        return 0
     }
 
     private var strokeOpacity: Double {
@@ -127,7 +130,7 @@ struct IconButtonChrome: ViewModifier {
             .labelStyle(.iconOnly)
             .font(.system(size: 13, weight: .medium))
             .foregroundStyle(isEnabled ? tint : Color(nsColor: .tertiaryLabelColor))
-            .frame(width: 28, height: 28)
+            .frame(width: 30, height: 30)
             .background(Color.primary.opacity(fillOpacity), in: Radius.shape(Radius.control))
             .overlay {
                 Radius.shape(Radius.control)
@@ -150,12 +153,14 @@ extension View {
     }
 }
 
-struct IconButtonStyle: ButtonStyle {
+struct IconButtonStyle: PrimitiveButtonStyle {
     var tint: Color = .primary
 
     func makeBody(configuration: Configuration) -> some View {
-        configuration.label
-            .iconButtonChrome(tint: tint, isPressed: configuration.isPressed)
+        Button(role: configuration.role, action: configuration.trigger) {
+            configuration.label.iconButtonChrome(tint: tint)
+        }
+        .buttonStyle(.borderless)
     }
 }
 
@@ -172,7 +177,6 @@ struct QuietAffordance: ViewModifier {
                 Radius.shape(cornerRadius)
                     .fill(Color.primary.opacity(pressed ? 0.08 : hovering ? 0.04 : 0))
             }
-            .scaleEffect(reduceMotion || !pressed ? 1 : 0.985)
             .animation(Motion.feedback(reduced: reduceMotion), value: hovering)
             .animation(Motion.feedback(reduced: reduceMotion), value: pressed)
             .onHover { hovering = $0 }
@@ -209,7 +213,6 @@ private struct QuietPressButton: View {
                 Radius.shape(cornerRadius)
                     .fill(Color.primary.opacity(isPressed ? 0.08 : hovering ? 0.04 : 0))
             }
-            .scaleEffect(reduceMotion || !isPressed ? 1 : 0.985)
             .animation(Motion.feedback(reduced: reduceMotion), value: hovering)
             .animation(Motion.feedback(reduced: reduceMotion), value: isPressed)
             .onHover { hovering = $0 }
@@ -224,9 +227,12 @@ struct EmptyState: View {
     var body: some View {
         VStack(spacing: compact ? 10 : 16) {
             Image(systemName: symbol)
-                .font(.system(size: compact ? 28 : 42, weight: .light))
-                .foregroundStyle(.tertiary).padding(.bottom, 4)
-            Text(title).font(compact ? .headline : .title2.weight(.semibold))
+                .font(.system(size: compact ? 22 : 30, weight: .light))
+                .foregroundStyle(AppSurface.secondary)
+                .frame(width: compact ? 44 : 60, height: compact ? 44 : 60)
+                .background(AppSurface.pill, in: Radius.shape(Radius.surface))
+                .accessibilityHidden(true)
+            Text(title).font(.system(size: compact ? 14 : 18, weight: .semibold))
             Text(message).font(.callout).foregroundStyle(.secondary)
                 // Respect the proposed height: fixedSize(vertical: true) can inflate
                 // NavigationSplitView's minimum height during narrow-width measurement.
@@ -259,7 +265,7 @@ struct SearchField: View {
                 .accessibilityLabel(preferences.text("search.clear"))
             }
         }
-        .font(.callout).padding(.horizontal, 9).padding(.vertical, 7)
+        .font(.system(size: 12)).padding(.horizontal, 10).padding(.vertical, 8)
         .fieldChrome(focused: isFocused)
     }
 }
@@ -271,7 +277,7 @@ struct FieldChrome: ViewModifier {
 
     func body(content: Content) -> some View {
         content
-            .background(Color(nsColor: .controlBackgroundColor), in: Radius.shape(radius))
+            .background(AppSurface.card, in: Radius.shape(radius))
             .overlay {
                 FieldFocusRing(focused: focused, radius: radius)
                     .animation(Motion.feedback(reduced: reduceMotion), value: focused)
@@ -286,10 +292,10 @@ private struct FieldFocusRing: View {
     var body: some View {
         ZStack {
             Radius.shape(radius)
-                .strokeBorder(focused ? Color.accentColor : Color.primary.opacity(0.12), lineWidth: 1)
+                .strokeBorder(focused ? AppSurface.accent : AppSurface.line, lineWidth: 1)
             Radius.shape(radius)
                 .inset(by: -1.5)
-                .stroke(Color.accentColor.opacity(focused ? 0.28 : 0), lineWidth: 3)
+                .stroke(AppSurface.accent.opacity(focused ? 0.20 : 0), lineWidth: 3)
         }
         .allowsHitTesting(false)
     }
@@ -303,9 +309,43 @@ struct ElevatedCard: ViewModifier {
             .background(AppSurface.card, in: Radius.shape(radius))
             .overlay {
                 Radius.shape(radius)
-                    .strokeBorder(Color.primary.opacity(0.06), lineWidth: 1)
+                    .strokeBorder(AppSurface.line, lineWidth: 1)
                     .allowsHitTesting(false)
             }
+    }
+}
+
+/// Graphite primary action and quiet, bordered secondary action. Retains Button's
+/// native activation, keyboard shortcuts and accessibility semantics.
+struct AppActionStyle: PrimitiveButtonStyle {
+    enum Emphasis { case secondary, primary }
+    var emphasis: Emphasis = .secondary
+
+    init(_ emphasis: Emphasis = .secondary) { self.emphasis = emphasis }
+
+    func makeBody(configuration: Configuration) -> some View {
+        Group {
+            if emphasis == .primary {
+                Button(configuration).buttonStyle(.borderedProminent)
+            } else {
+                Button(configuration).buttonStyle(.bordered)
+            }
+        }
+        .tint(AppSurface.ink)
+        .controlSize(.regular)
+        .font(.system(size: 12, weight: .medium))
+    }
+}
+
+struct CountBadge: View {
+    let count: Int
+    var emphasized = false
+    var body: some View {
+        Text(count, format: .number)
+            .font(.system(size: 10, weight: .medium)).monospacedDigit()
+            .foregroundStyle(emphasized ? AppSurface.inverse : AppSurface.secondary)
+            .padding(.horizontal, 6).padding(.vertical, 2)
+            .background(emphasized ? AppSurface.ink : AppSurface.pill, in: Capsule())
     }
 }
 

@@ -22,12 +22,18 @@ private actor CountingLoader: AppDetailsLoading {
     var calls = 0
     var fail = false
     var delay = false
+    var partial = false
     func setFailure(_ value: Bool) { fail = value }
     func setDelay(_ value: Bool) { delay = value }
+    func setPartial(_ value: Bool) { partial = value }
     func fetch(app: AppEntry, country: String, language: String) async throws -> AppDetails {
         calls += 1
         if delay { try await Task.sleep(for: .seconds(5)) }
         if fail { throw URLError(.notConnectedToInternet) }
+        if partial {
+            return AppDetails(listing: try DetailsFixtures.listing(for: app, language: language), country: country,
+                language: language, fetchedAt: Date(), page: nil, schemaVersion: AppDetails.currentSchemaVersion)
+        }
         return try DetailsFixtures.details(app: app, country: country, language: language)
     }
 }
@@ -59,6 +65,10 @@ struct AppDetailsTests {
             precondition(page.purchases[2].name == page.purchases[3].name)
             precondition(page.purchases[2].price != page.purchases[3].price)
             precondition(page.requirements.first?.platform == "Mac")
+            let modern = try StorePageDetails.parse(DetailsFixtures.pageHTML(listing: listing, language: language,
+                modernAnnotations: true), listing: listing, country: "cn")
+            precondition(modern.purchases == page.purchases, "New textPair nodes must preserve every price and duplicate name")
+            precondition(modern.requirements == page.requirements, "New linkableText compatibility must match the legacy representation")
             let updates = page.releaseNotes ?? []
             precondition(updates.count == 2)
             precondition(updates[0].version == listing.version)
@@ -177,6 +187,15 @@ struct AppDetailsTests {
         await loader.setDelay(false)
         await store.load(app: app, language: "en", force: true)
         precondition(store.details(for: app, language: "en") != nil)
+        let completeSnapshot = store.details(for: app, language: "en")
+        await loader.setPartial(true)
+        await store.load(app: app, language: "en", force: true)
+        precondition(store.details(for: app, language: "en") == completeSnapshot,
+                     "A partial lookup must not erase cached purchases, updates or their timestamp")
+        precondition(store.errors[AppDetailsStore.key(for: app, language: "en")] == "info.pageUnavailable")
+        await loader.setPartial(false)
+        await store.load(app: app, language: "en", force: true)
+        precondition(store.errors[AppDetailsStore.key(for: app, language: "en")] == nil)
         print("Passed: exact identity matching, full descriptions, bilingual page parsing, purchase availability, region consistency, HTTP failures, cancellation, cache expiry, and persistent cache fallback.")
 
         if CommandLine.arguments.contains("--live") {

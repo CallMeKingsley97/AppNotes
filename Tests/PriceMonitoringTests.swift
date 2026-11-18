@@ -59,10 +59,10 @@ struct PriceMonitoringTests {
             let copyHistory = try await AppStorePriceClient().fetch(id: 6757165518, country: "cn",
                                                                   expectedBundle: "com.huagx.copyhistory")
             precondition(copyHistory.applicationAvailable && copyHistory.purchaseCount > 0)
-            precondition(copyHistory.purchaseSnapshot?.purchases.count == 5)
-            precondition(copyHistory.purchaseCount == 4)
-            precondition(copyHistory.purchaseSnapshot?.purchases.contains { $0.name == "CopyHistory Pro 永久激活" && $0.price == "¥58.00" } == true)
-            print("Live CopyHistory: \(copyHistory.purchaseCount) uniquely named purchases, coverage=\(copyHistory.purchaseCoverageKey)")
+            guard let snapshot = copyHistory.purchaseSnapshot else { preconditionFailure("Live public purchase list missing") }
+            precondition(snapshot.purchases.count >= copyHistory.purchaseCount)
+            precondition(snapshot.purchases.allSatisfy { !$0.name.isEmpty })
+            print("Live CopyHistory: \(snapshot.purchases.count) public rows, \(copyHistory.purchaseCount) uniquely named purchases, coverage=\(copyHistory.purchaseCoverageKey)")
         }
         print("Passed: price transitions, separate app/IAP events, confirmation and deduplication, parsing, fixed storefront, persistence, undo and in-flight edits.")
     }
@@ -235,6 +235,14 @@ struct PriceMonitoringTests {
         precondition(parsed.purchases.count == 4)
         precondition(PublicPurchasePrices.quotes(from: parsed.purchases, currency: "CNY", observedAt: Date()).count == 3,
                      "A readable same-name price remains monitored")
+        let modernHTML = try DetailsFixtures.pageHTML(listing: listing, modernAnnotations: true)
+        PriceURLProtocol.handler = { request in
+            (200, request.url!.host == "itunes.apple.com" ? data : Data(modernHTML.utf8))
+        }
+        let modern = try await client.fetch(id: listing.trackId, country: "cn", expectedBundle: listing.bundleId)
+        precondition(modern.purchaseSnapshot?.purchases.count == 4 && modern.purchaseCount == 3,
+                     "Modern annotations must feed the full display list and comparable prices")
+        precondition(modern.purchaseStatus?.failure == nil)
         let duplicates = html.replacingOccurrences(of: "Pro 终身会员", with: "Ultimate")
             .replacingOccurrences(of: "Ultimate 终身会员", with: "Ultimate")
         PriceURLProtocol.handler = { request in

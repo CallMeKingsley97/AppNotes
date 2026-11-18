@@ -311,3 +311,6 @@
 "monitor.lastChecked" = "Last checked";
 "monitor.purchaseSection" = "In-App Purchases";
 "monitor.refreshing" = "Checking…";
+"monitor.unfollow.confirm" = "Price checks for this app will stop. Existing reminders will remain. You can undo this from the bottom of the list.";
+"monitor.scope.title" = "What to watch";
+"info.pageUnavailable" = "Store details could not be refreshed. Any previous purchases, compatibility and updates are retained; try again later.";

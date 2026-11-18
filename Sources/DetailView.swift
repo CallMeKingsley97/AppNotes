@@ -36,10 +36,11 @@ struct DetailView: View {
                     Text(preferences.text("info.updates")).tag("updates")
                 }
                 .pickerStyle(.segmented).labelsHidden().frame(maxWidth: 330)
+                .accessibilityIdentifier("detail.tabs")
                 Spacer(minLength: 12)
                 refreshButton
             }
-            .padding(.horizontal, PageStyle.inset).padding(.bottom, 20)
+            .padding(.horizontal, PageStyle.inset).padding(.bottom, 16)
             .frame(maxWidth: PageStyle.width).frame(maxWidth: .infinity)
             Divider()
             Group {
@@ -56,7 +57,7 @@ struct DetailView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
             .animation(Motion.content(reduced: reduceMotion), value: tab)
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppSurface.canvas)
         .sheet(isPresented: $showingWatch) {
             PriceWatchEditor(monitor: monitor, entry: watchEntry,
                 existing: monitor.state.watches.first { $0.app.storeID == watchEntry.appStoreID })
@@ -73,9 +74,9 @@ struct DetailView: View {
     private var header: some View {
         VStack(alignment: .leading, spacing: PageStyle.spacing) {
             HStack(alignment: .top, spacing: 16) {
-                AppIcon(app: app, size: 56)
+                AppIcon(app: app, size: 48)
                 VStack(alignment: .leading, spacing: 5) {
-                    Text(app.name).font(.title2.weight(.semibold))
+                    Text(app.name).font(.system(size: 22, weight: .semibold))
                         .lineLimit(2).textSelection(.enabled)
                     HStack(spacing: 8) {
                         Text(preferences.text(AppCategory.of(app).titleKey))
@@ -83,7 +84,7 @@ struct DetailView: View {
                         if let listing = details?.listing, let count = listing.userRatingCount, count > 0,
                            let rating = listing.averageUserRating, (0...5).contains(rating) {
                             Text("·").foregroundStyle(.tertiary)
-                            Image(systemName: "star.fill").font(.caption).foregroundStyle(.orange)
+                            Image(systemName: "star.fill").font(.caption).foregroundStyle(AppSurface.warning)
                             Text(rating, format: .number.precision(.fractionLength(1))).font(.callout.weight(.medium))
                         }
                     }
@@ -106,7 +107,7 @@ struct DetailView: View {
                     .menuStyle(.borderlessButton).fixedSize()
                 }
             }
-            .buttonStyle(.bordered).controlSize(.large)
+            .buttonStyle(AppActionStyle())
             let categories = categoryStore.categories.filter { categoryStore.contains(app, in: $0) }
             if !categories.isEmpty {
                 Label(categories.map(\.name).joined(separator: preferences.language.resolvedIdentifier() == "zh-Hans" ? "、" : ", "),
@@ -159,7 +160,7 @@ struct DetailView: View {
         Button(action: app.open) {
             Label(preferences.text("detail.open"), systemImage: "arrow.up.forward")
         }
-        .buttonStyle(.borderedProminent)
+        .buttonStyle(AppActionStyle(.primary))
     }
 
     private var refreshButton: some View {
@@ -170,8 +171,8 @@ struct DetailView: View {
                 .labelStyle(.iconOnly)
                 .opacity(loading ? 0 : 1)
         }
-        .buttonStyle(IconButtonStyle(tint: refreshConfirmed ? .green : .primary))
-        .allowsHitTesting(!loading)
+        .buttonStyle(IconButtonStyle(tint: refreshConfirmed ? AppSurface.success : .primary))
+        .disabled(loading)
         .accessibilityRespondsToUserInteraction(!loading)
         .overlay {
             if loading {
@@ -280,9 +281,10 @@ struct CopyButton: View {
                   systemImage: copied ? "checkmark" : "doc.on.doc")
                 .labelStyle(.iconOnly)
         }
-        .buttonStyle(IconButtonStyle(tint: copied ? .green : .primary))
+        .buttonStyle(IconButtonStyle(tint: copied ? AppSurface.success : .primary))
         .disabled(text.isEmpty)
         .help(preferences.text(copied ? "info.copied" : "info.copy"))
+        .accessibilityLabel(preferences.text(copied ? "info.copied" : "info.copy"))
         .task(id: copied) {
             if copied {
                 try? await Task.sleep(for: .seconds(2))
@@ -383,7 +385,7 @@ struct AppIntroductionCard: View {
                                     }
                                     .font(.caption.weight(.medium))
                                 }
-                                .buttonStyle(.plain).foregroundStyle(Color.accentColor)
+                                .buttonStyle(.plain).foregroundStyle(AppSurface.ink)
                             }
                         }
                         .transition(.opacity)

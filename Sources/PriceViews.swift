@@ -8,9 +8,9 @@ struct PriceKindBadge: View {
     var body: some View {
         Label(preferences.text(isScope ? "monitor.watching.\(kind.rawValue)" : kind.titleKey), systemImage: kind.symbol)
             .font(.caption.weight(.medium))
-            .foregroundStyle(kind == .application ? Color.blue : Color.purple)
+            .foregroundStyle(AppSurface.secondary)
             .padding(.horizontal, 7).padding(.vertical, 4)
-            .background((kind == .application ? Color.blue : Color.purple).opacity(0.10), in: Radius.shape(6))
+            .background(AppSurface.pill, in: Radius.shape(Radius.control))
     }
 }
 
@@ -50,7 +50,7 @@ struct PriceSourceSummary: View {
                     Text(preferences.text("monitor.source.stale"))
                 }
                 if let status, let failure = status.failure {
-                    Text(preferences.text(failure.issue.messageKey)).foregroundStyle(.orange)
+                    Text(preferences.text(failure.issue.messageKey)).foregroundStyle(AppSurface.warning)
                     Text(preferences.text("monitor.source.attempt") + " " + status.attemptedAt.formatted(date: .abbreviated, time: .shortened))
                     if let retry = failure.retryAfter, retry > context.date {
                         Text(preferences.text("monitor.source.retry") + " " + retry.formatted(date: .omitted, time: .standard))
@@ -84,7 +84,7 @@ struct PurchasePriceRows: View {
                         if status != "monitor.comparison.comparable" {
                             Text(preferences.text(status))
                                 .font(.caption)
-                                .foregroundStyle(status == "monitor.status.free" ? Color.green : .secondary)
+                                .foregroundStyle(status == "monitor.status.free" ? AppSurface.success : .secondary)
                                 .padding(.leading, 24)
                                 .help(explanation(item))
                         }
@@ -114,7 +114,7 @@ struct MonitorFeedback: View {
         VStack(alignment: .leading, spacing: 8) {
             if let key = monitor.errorKey {
                 Label(preferences.text(key), systemImage: "exclamationmark.triangle")
-                    .foregroundStyle(.orange).font(.caption)
+                    .foregroundStyle(AppSurface.warning).font(.caption)
             }
             if let key = monitor.undoMessageKey {
                 HStack {
@@ -147,7 +147,7 @@ struct MonitorCheckFooter: View {
                     Button { Task { await monitor.refresh(force: true) } } label: {
                         Label(preferences.text("monitor.check"), systemImage: "arrow.clockwise").labelStyle(.iconOnly)
                     }
-                    .buttonStyle(.borderless).help(preferences.text("monitor.check.help"))
+                    .buttonStyle(IconButtonStyle()).help(preferences.text("monitor.check.help"))
                     .disabled(!monitor.writable || !monitor.state.watches.contains(where: \.isEnabled))
                 }
             }
@@ -177,7 +177,7 @@ struct PriceReminderList: View {
         VStack(spacing: 0) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
-                    Text(preferences.text("monitor.reminders")).font(.title3.weight(.semibold))
+                    Text(preferences.text("monitor.reminders")).font(.system(size: 17, weight: .semibold))
                     Spacer(minLength: 4)
                     Menu {
                         Button(preferences.text("monitor.readAll")) {
@@ -210,6 +210,7 @@ struct PriceReminderList: View {
                 }
             }
             .listStyle(.inset).accessibilityIdentifier("monitor.reminderList")
+            .scrollContentBackground(.hidden)
             .overlay {
                 if events.isEmpty {
                     EmptyState(symbol: "bell", title: preferences.text(query.isEmpty ? "monitor.empty" : "search.noResults"),
@@ -220,8 +221,11 @@ struct PriceReminderList: View {
             Divider()
             MonitorCheckFooter(monitor: monitor)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppSurface.inset)
         .onChange(of: scope) { _, _ in selection = nil }
+        .onChange(of: events.map(\.id)) { _, ids in
+            if let selection, !ids.contains(selection) { self.selection = nil }
+        }
         .onChange(of: selection) { _, id in
             guard let id else { return }
             Task { await monitor.markRead([id], read: true) }
@@ -239,7 +243,7 @@ private struct PriceReminderRow: View {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(event.app.name).font(.body.weight(event.isUnread ? .semibold : .medium)).lineLimit(2)
                     Spacer(minLength: 0)
-                    if event.isUnread { Circle().fill(Color.accentColor).frame(width: 6, height: 6) }
+                    if event.isUnread { Circle().fill(AppSurface.ink).frame(width: 6, height: 6) }
                 }
                 PriceKindBadge(kind: event.kind)
                 if event.kind == .inAppPurchase {
@@ -268,10 +272,10 @@ private struct MonitorDetailHeader: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 16) {
-            AppIcon(app: app.entry, size: 56)
+            AppIcon(app: app.entry, size: 48)
                 .clipShape(Radius.shape(12))
             VStack(alignment: .leading, spacing: 7) {
-                Text(app.name).font(.title2.weight(.semibold))
+                Text(app.name).font(.system(size: 22, weight: .semibold))
                     .fixedSize(horizontal: false, vertical: true).textSelection(.enabled)
                 Text((preferences.locale.localizedString(forRegionCode: app.country.uppercased()) ?? app.country.uppercased())
                     + " · " + (app.platform == "mac-software" ? "Mac" : "iPhone / iPad"))
@@ -307,14 +311,14 @@ struct PriceReminderDetail: View {
                                     Label(preferences.text(event.statusKey(now: context.date)),
                                           systemImage: event.status == .ended ? "clock" : "checkmark.circle")
                                         .font(.caption.weight(.medium))
-                                        .foregroundStyle(event.statusKey(now: context.date) == "monitor.status.free" ? Color.green : .secondary)
+                                        .foregroundStyle(event.statusKey(now: context.date) == "monitor.status.free" ? AppSurface.success : .secondary)
                                 }
                             }
                             Text(event.kind == .inAppPurchase ? event.productName : event.app.name)
                                 .font(.title3.weight(.semibold)).textSelection(.enabled)
                             HStack(alignment: .firstTextBaseline, spacing: 12) {
                                 Text(event.current.formatted(locale: preferences.locale))
-                                    .font(.system(size: 38, weight: .semibold, design: .rounded)).monospacedDigit()
+                                    .font(.system(size: 36, weight: .semibold)).monospacedDigit()
                                 if event.previous.amount > 0 && event.current.amount == 0 {
                                     Text(event.previous.formatted(locale: preferences.locale))
                                         .font(.title3).strikethrough().foregroundStyle(.secondary)
@@ -351,25 +355,25 @@ struct PriceReminderDetail: View {
                 EmptyState(symbol: "bell", title: preferences.text("monitor.select"), message: preferences.text("monitor.select.help"))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
-        }.background(Color(nsColor: .windowBackgroundColor))
+        }.background(AppSurface.canvas)
     }
 
     @ViewBuilder private func actions(_ event: FreePriceEvent) -> some View {
         Link(destination: event.app.storeURL) {
             Label(preferences.text("info.viewStore"), systemImage: "arrow.up.right")
-        }.buttonStyle(.borderedProminent)
+        }.buttonStyle(AppActionStyle(.primary))
         Button {
             Task { await monitor.markRead([event.id], read: event.isUnread) }
         } label: {
             Label(preferences.text(event.isUnread ? "monitor.read" : "monitor.unread"),
                   systemImage: event.isUnread ? "envelope.open" : "envelope.badge")
-        }.buttonStyle(.bordered).disabled(!monitor.writable)
+        }.buttonStyle(AppActionStyle()).disabled(!monitor.writable)
         Button {
             Task { await monitor.archive(event.id, archived: event.archivedAt == nil) }
         } label: {
             Label(preferences.text(event.archivedAt == nil ? "monitor.archive" : "monitor.unarchive"),
                   systemImage: "archivebox")
-        }.buttonStyle(.bordered).disabled(!monitor.writable)
+        }.buttonStyle(AppActionStyle()).disabled(!monitor.writable)
     }
 }
 
@@ -391,11 +395,12 @@ struct PriceWatchList: View {
         VStack(spacing: 0) {
             VStack(spacing: 12) {
                 HStack {
-                    Text(preferences.text("monitor.watches")).font(.title3.weight(.semibold))
+                    Text(preferences.text("monitor.watches")).font(.system(size: 17, weight: .semibold))
                     Spacer(minLength: 4)
                     Button { adding = true } label: {
                         Label(preferences.text("monitor.add"), systemImage: "plus").labelStyle(.iconOnly)
-                    }.buttonStyle(.borderless).disabled(!monitor.writable)
+                    }.buttonStyle(IconButtonStyle()).disabled(!monitor.writable)
+                    .help(preferences.text("monitor.add"))
                     .accessibilityIdentifier("monitor.add")
                 }
                 SearchField(text: $query, prompt: preferences.text("monitor.search"))
@@ -421,19 +426,29 @@ struct PriceWatchList: View {
                     }.padding(.vertical, 8).tag(watch.id)
                 }
             }.listStyle(.inset).accessibilityIdentifier("monitor.watchList")
+            .scrollContentBackground(.hidden)
             .overlay {
                 if watches.isEmpty {
                     VStack(spacing: 12) {
-                        EmptyState(symbol: "heart", title: preferences.text("monitor.watches.empty"),
-                                   message: preferences.text("monitor.watches.empty.help"), compact: true)
-                        Button(preferences.text("monitor.add")) { adding = true }.disabled(!monitor.writable)
+                        EmptyState(symbol: query.isEmpty ? "heart" : "magnifyingglass",
+                                   title: preferences.text(query.isEmpty ? "monitor.watches.empty" : "search.noResults"),
+                                   message: preferences.text(query.isEmpty ? "monitor.watches.empty.help" : "search.tryAgain"), compact: true)
+                        if query.isEmpty {
+                            Button(preferences.text("monitor.add")) { adding = true }
+                                .buttonStyle(AppActionStyle(.primary)).disabled(!monitor.writable)
+                        } else {
+                            Button(preferences.text("search.clear")) { query = "" }.buttonStyle(AppActionStyle())
+                        }
                     }.padding(16)
                 }
             }
             Divider()
             MonitorCheckFooter(monitor: monitor)
         }
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(AppSurface.inset)
+        .onChange(of: watches.map(\.id)) { _, ids in
+            if let selection, !ids.contains(selection) { self.selection = nil }
+        }
         .sheet(isPresented: $adding) { PriceWatchEditor(monitor: monitor) }
     }
 }
@@ -443,6 +458,7 @@ struct PriceWatchDetail: View {
     @ObservedObject var monitor: PriceMonitorStore
     let watchID: String?
     @State private var editing: PriceWatch?
+    @State private var confirmingRemoval = false
     private var watch: PriceWatch? { watchID.flatMap(monitor.watch(for:)) }
 
     var body: some View {
@@ -475,8 +491,18 @@ struct PriceWatchDetail: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(AppSurface.canvas)
         .sheet(item: $editing) { PriceWatchEditor(monitor: monitor, existing: $0) }
+        .confirmationDialog(preferences.text("monitor.unfollow"), isPresented: $confirmingRemoval, titleVisibility: .visible) {
+            if let watch {
+                Button(preferences.text("monitor.unfollow"), role: .destructive) {
+                    Task { await monitor.remove(watchID: watch.id) }
+                }
+            }
+            Button(preferences.text("fetch.cancel"), role: .cancel) {}
+        } message: {
+            Text(preferences.text("monitor.unfollow.confirm"))
+        }
     }
 
     private func prices(_ watch: PriceWatch) -> some View {
@@ -527,7 +553,7 @@ struct PriceWatchDetail: View {
             }
             if let error = watch.errorKey {
                 Label(preferences.text(error), systemImage: "exclamationmark.triangle")
-                    .font(.callout).foregroundStyle(.orange)
+                    .font(.callout).foregroundStyle(AppSurface.warning)
             } else if let date = watch.lastSuccess {
                 HStack {
                     Label(preferences.text("monitor.lastChecked"), systemImage: "clock")
@@ -568,23 +594,24 @@ struct PriceWatchDetail: View {
         Button {
             Task { await monitor.refresh(watchID: watch.id, force: true) }
         } label: {
-            Label(preferences.text(monitor.isChecking ? "monitor.refreshing" : "monitor.check"), systemImage: "arrow.clockwise")
+            Label(preferences.text(monitor.activeWatchID == watch.id ? "monitor.refreshing" : "monitor.check"), systemImage: "arrow.clockwise")
         }
-        .buttonStyle(.borderedProminent)
-        .disabled(!watch.isEnabled || !monitor.writable || monitor.isChecking)
+        .buttonStyle(AppActionStyle(.primary))
+        .disabled(!watch.isEnabled || !monitor.writable || monitor.activeWatchID == watch.id)
         .accessibilityIdentifier("monitor.checkWatch")
         Link(destination: watch.app.storeURL) {
             Label(preferences.text("info.viewStore"), systemImage: "arrow.up.right")
-        }.buttonStyle(.bordered)
+        }.buttonStyle(AppActionStyle())
         Menu {
             Button(preferences.text("monitor.edit")) { editing = watch }
             Divider()
             Button(preferences.text("monitor.unfollow"), role: .destructive) {
-                Task { await monitor.remove(watchID: watch.id) }
+                confirmingRemoval = true
             }
         } label: {
             Label(preferences.text("monitor.edit"), systemImage: "ellipsis")
         }.menuStyle(.borderlessButton).fixedSize().disabled(!monitor.writable)
+        .help(preferences.text("monitor.edit"))
     }
 }
 
@@ -604,65 +631,33 @@ struct PriceWatchEditor: View {
     @State private var message: String?
     @State private var lookupTask: Task<Void, Never>?
     @State private var generation = UUID()
+    @FocusState private var linkFocused: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: PageStyle.spacing) {
-            PageHeading(title: preferences.text(existing == nil ? "monitor.add" : "monitor.edit"),
-                subtitle: preferences.text("monitor.add.help"), symbol: "heart")
-            VStack(alignment: .leading, spacing: 8) {
-                TextField(preferences.text("monitor.link"), text: $link).textFieldStyle(.roundedBorder)
-                    .disabled(existing != nil || saving).accessibilityIdentifier("monitor.link")
-                HStack {
-                    Text(preferences.text("monitor.region"))
-                    Picker(preferences.text("monitor.region"), selection: $country) {
-                        ForEach(Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.sorted(), id: \.self) { code in
-                            Text((preferences.locale.localizedString(forRegionCode: code) ?? code) + " (\(code))").tag(code.lowercased())
-                        }
-                    }.labelsHidden().frame(maxWidth: 250).disabled(saving)
-                    Spacer(minLength: 0)
-                    Button(preferences.text("monitor.lookup"), action: lookup).disabled(busy || saving || link.isEmpty)
-                        .accessibilityIdentifier("monitor.lookup")
-                }
-            }
-            if busy { ProgressView(preferences.text("monitor.lookup.loading")).controlSize(.small) }
-            if let result {
-                VStack(alignment: .leading, spacing: 10) {
-                    HStack(spacing: 12) {
-                        AppIcon(app: result.app.entry, size: 42)
-                        VStack(alignment: .leading, spacing: 4) {
-                            Text(result.app.name).font(.headline)
-                            Text(result.app.country.uppercased() + " · " + (result.app.platform == "mac-software" ? "Mac" : "iPhone / iPad"))
-                                .font(.caption).foregroundStyle(.secondary)
-                        }
+        VStack(spacing: 0) {
+            ScrollView {
+                VStack(alignment: .leading, spacing: PageStyle.spacing) {
+                    PageHeading(title: preferences.text(existing == nil ? "monitor.add" : "monitor.edit"),
+                        subtitle: preferences.text("monitor.add.help"), symbol: "heart")
+                    linkSection
+                    if busy { ProgressView(preferences.text("monitor.lookup.loading")).controlSize(.small) }
+                    if let result { preview(result) }
+                    scopeSection
+                    Text(preferences.text(purchases ? "monitor.iapNotice" : "monitor.priceNotice"))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    Text(preferences.text(existing == nil ? "monitor.baselineNotice" : "monitor.regionNotice"))
+                        .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
+                    if let message {
+                        Label(preferences.text(message), systemImage: "exclamationmark.triangle")
+                            .font(.callout).foregroundStyle(AppSurface.warning)
                     }
-                    Text(preferences.text("monitor.previewPrice") + " " + (result.quotes.first(where: { $0.kind == .application })?.price.formatted(locale: preferences.locale) ?? preferences.text("monitor.unknown")))
-                        .font(.callout)
-                    if purchases {
-                        Text(preferences.text(result.purchaseCoverageKey) + " · " + preferences.text("monitor.purchaseCount", result.purchaseCount))
-                            .font(.caption).foregroundStyle(.secondary)
-                    }
-                }.padding(20).frame(maxWidth: .infinity, alignment: .leading).elevatedCard()
+                }.padding(PageStyle.inset)
             }
-            HStack(spacing: 24) {
-                Toggle(isOn: $application) { Label(preferences.text("monitor.watching.application"), systemImage: PriceKind.application.symbol) }
-                Toggle(isOn: $purchases) { Label(preferences.text("monitor.watching.inAppPurchase"), systemImage: PriceKind.inAppPurchase.symbol) }
-            }.disabled(saving)
-            Text(preferences.text(purchases ? "monitor.iapNotice" : "monitor.priceNotice"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            Text(preferences.text(existing == nil ? "monitor.baselineNotice" : "monitor.regionNotice"))
-                .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
-            if let message { Label(preferences.text(message), systemImage: "exclamationmark.triangle").font(.callout).foregroundStyle(.orange) }
-            HStack {
-                Spacer()
-                Button(preferences.text("fetch.cancel")) { dismiss() }.keyboardShortcut(.cancelAction).disabled(saving)
-                Button(preferences.text(existing == nil ? "monitor.follow" : "category.save")) { save() }
-                    .buttonStyle(.borderedProminent).keyboardShortcut(.defaultAction)
-                    .disabled(result == nil || busy || saving || (!application && !purchases) || !monitor.writable)
-                    .accessibilityIdentifier("monitor.save")
-            }
+            Divider()
+            footer
         }
-        .padding(PageStyle.inset).frame(width: 570)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .frame(width: 570, height: 640)
+        .background(AppSurface.canvas)
         .onAppear {
             if let existing {
                 link = existing.app.storeURL.absoluteString
@@ -673,6 +668,7 @@ struct PriceWatchEditor: View {
                 country = entry?.storeCountryCode ?? "cn"
                 link = "https://apps.apple.com/\(country)/app/id\(id)"
             }
+            linkFocused = existing == nil && entry == nil
         }
         .onChange(of: link) { _, value in
             invalidate()
@@ -681,6 +677,80 @@ struct PriceWatchEditor: View {
         .onChange(of: country) { _, _ in invalidate() }
         .onChange(of: purchases) { _, _ in invalidate() }
         .onDisappear { lookupTask?.cancel() }
+    }
+
+    private var regionCodes: [String] {
+        Locale.Region.isoRegions.map(\.identifier).filter { $0.count == 2 }.sorted()
+    }
+
+    private var linkSection: some View {
+        DetailCard {
+            Text(preferences.text("monitor.link")).font(.callout.weight(.medium))
+            TextField(preferences.text("monitor.link"), text: $link).textFieldStyle(.plain)
+                .focused($linkFocused).padding(9).fieldChrome(focused: linkFocused)
+                .disabled(existing != nil || saving).accessibilityIdentifier("monitor.link")
+                .accessibilityLabel(preferences.text("monitor.link"))
+            HStack {
+                Text(preferences.text("monitor.region"))
+                Picker(preferences.text("monitor.region"), selection: $country) {
+                    ForEach(regionCodes, id: \.self) { code in
+                        Text((preferences.locale.localizedString(forRegionCode: code) ?? code) + " (\(code))")
+                            .tag(code.lowercased())
+                    }
+                }.labelsHidden().frame(maxWidth: 220).disabled(saving)
+                Spacer(minLength: 0)
+                Button(preferences.text("monitor.lookup"), action: lookup)
+                    .buttonStyle(AppActionStyle()).disabled(busy || saving || link.isEmpty)
+                    .accessibilityIdentifier("monitor.lookup")
+            }
+        }
+    }
+
+    private func preview(_ result: PriceCheckResult) -> some View {
+        DetailCard {
+            HStack(spacing: 12) {
+                AppIcon(app: result.app.entry, size: 42)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(result.app.name).font(.headline)
+                    Text(result.app.country.uppercased() + " · " + (result.app.platform == "mac-software" ? "Mac" : "iPhone / iPad"))
+                        .font(.caption).foregroundStyle(.secondary)
+                }
+            }
+            Text(preferences.text("monitor.previewPrice") + " " +
+                (result.quotes.first(where: { $0.kind == .application })?.price.formatted(locale: preferences.locale) ?? preferences.text("monitor.unknown")))
+                .font(.callout)
+            if purchases {
+                Text(preferences.text(result.purchaseCoverageKey) + " · " + preferences.text("monitor.purchaseCount", result.purchaseCount))
+                    .font(.caption).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private var scopeSection: some View {
+        DetailCard {
+            Text(preferences.text("monitor.scope.title")).font(.callout.weight(.medium))
+            VStack(alignment: .leading, spacing: 12) {
+                Toggle(isOn: $application) {
+                    Label(preferences.text("monitor.watching.application"), systemImage: PriceKind.application.symbol)
+                }
+                Toggle(isOn: $purchases) {
+                    Label(preferences.text("monitor.watching.inAppPurchase"), systemImage: PriceKind.inAppPurchase.symbol)
+                }
+            }.toggleStyle(.checkbox).disabled(saving)
+        }
+    }
+
+    private var footer: some View {
+        HStack {
+            if saving { ProgressView().controlSize(.small) }
+            Spacer()
+            Button(preferences.text("fetch.cancel")) { dismiss() }
+                .buttonStyle(AppActionStyle()).keyboardShortcut(.cancelAction).disabled(saving)
+            Button(preferences.text(existing == nil ? "monitor.follow" : "category.save")) { save() }
+                .buttonStyle(AppActionStyle(.primary)).keyboardShortcut(.defaultAction)
+                .disabled(result == nil || busy || saving || (!application && !purchases) || !monitor.writable)
+                .accessibilityIdentifier("monitor.save")
+        }.padding(.horizontal, PageStyle.inset).padding(.vertical, 16)
     }
 
     private func invalidate() {

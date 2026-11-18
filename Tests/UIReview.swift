@@ -303,6 +303,15 @@ private final class ReviewDelegate: NSObject, NSApplicationDelegate {
             outline.scrollRowToVisible(row)
             clickRow(outline, row: row, x: 80)
             try await Task.sleep(for: .milliseconds(250))
+            if outline.selectedRow != row {
+                // A shared graphical session may activate a different window
+                // during tracking. Retry the same visible click once; never
+                // substitute programmatic selection for the user's action.
+                window.makeKeyAndOrderFront(nil)
+                outline.scrollRowToVisible(row)
+                clickRow(outline, row: row, x: 80)
+                try await Task.sleep(for: .milliseconds(250))
+            }
             guard outline.selectedRow == row else {
                 throw AppearanceFailure(description: "\(scenario), \(name): sidebar click did not select the requested page")
             }
