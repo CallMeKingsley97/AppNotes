@@ -65,6 +65,7 @@ open Build/AppNotes.app
 | 命令 | 说明 |
 | --- | --- |
 | `./build.sh` | 编译并生成 `Build/AppNotes.app` |
+| `./icon.sh` | 从 `makeicon.swift` 重新生成 macOS 图标资源 |
 | `zsh test.sh` | 运行离线测试并校验本地化资源 |
 | `./package.sh` | 构建并生成 DMG |
 | `zsh ui-review.sh` | 编译原生界面检查工具 |

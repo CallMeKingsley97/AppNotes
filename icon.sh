@@ -1,22 +1,28 @@
 #!/bin/zsh
-# 重新生成 AppIcon.icns
+# 重新生成 macOS 应用图标的全部尺寸。
 set -e
 cd "$(dirname "$0")"
 
-xcrun swiftc -O -target arm64-apple-macosx15.0 -framework AppKit -o /tmp/mkicon makeicon.swift
+tmp_dir=$(mktemp -d "${TMPDIR:-/tmp}/appnotes-icon.XXXXXX")
+trap 'rm -rf -- "$tmp_dir"' EXIT
+iconset="$tmp_dir/AppIcon.iconset"
+mkdir "$iconset"
 
-rm -rf AppIcon.iconset AppIcon.icns
-mkdir -p AppIcon.iconset
-/tmp/mkicon /tmp/appicon_1024.png
+xcrun swiftc -O -target arm64-apple-macosx15.0 -module-cache-path "$tmp_dir/ModuleCache" \
+  -framework AppKit -o "$tmp_dir/mkicon" makeicon.swift
+master="$iconset/icon_512x512@2x.png"
+"$tmp_dir/mkicon" "$master"
 
-for s in 16 32 128 256 512; do
-  sips -z $s $s /tmp/appicon_1024.png --out "AppIcon.iconset/icon_${s}x${s}.png" > /dev/null
+for size in 16 32 128 256 512; do
+  sips -z "$size" "$size" "$master" --out "$iconset/icon_${size}x${size}.png" >/dev/null
+  if [ "$size" -lt 512 ]; then
+    retina=$((size * 2))
+    sips -z "$retina" "$retina" "$master" --out "$iconset/icon_${size}x${size}@2x.png" >/dev/null
+  fi
 done
-sips -z 32 32   /tmp/appicon_1024.png --out AppIcon.iconset/icon_16x16@2x.png     > /dev/null
-sips -z 64 64   /tmp/appicon_1024.png --out AppIcon.iconset/icon_32x32@2x.png     > /dev/null
-sips -z 256 256 /tmp/appicon_1024.png --out AppIcon.iconset/icon_128x128@2x.png   > /dev/null
-sips -z 512 512 /tmp/appicon_1024.png --out AppIcon.iconset/icon_256x256@2x.png   > /dev/null
-cp /tmp/appicon_1024.png AppIcon.iconset/icon_512x512@2x.png
 
-iconutil -c icns AppIcon.iconset -o AppIcon.icns
-echo "==> AppIcon.icns 已更新 ($(wc -c < AppIcon.icns | tr -d ' ') bytes)"
+iconutil -c icns "$iconset" -o "$tmp_dir/AppIcon.icns"
+mkdir -p AppIcon.iconset
+cp "$iconset"/*.png AppIcon.iconset/
+cp "$tmp_dir/AppIcon.icns" AppIcon.icns
+printf '==> AppIcon.icns 已更新\n'

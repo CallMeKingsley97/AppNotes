@@ -1,185 +1,175 @@
 import AppKit
 
-// 1024x1024 画布，几何量按「自上而下」书写，最后用 P() 转成 y-up。
-let S: CGFloat = 1024
-let SS: CGFloat = 824                    // squircle 边长（Apple 图标模板：1024 网格中图形占 824）
-let CX: CGFloat = S / 2
-let CY: CGFloat = S / 2
+// 使用 1024 点设计网格，图形坐标从左上角起算。
+let canvasSize = 1024
 
-func P(_ x: CGFloat, _ y: CGFloat) -> NSPoint { NSPoint(x: x, y: S - y) }
-
-func rgb(_ r: CGFloat, _ g: CGFloat, _ b: CGFloat, _ a: CGFloat = 1) -> NSColor {
-    NSColor(calibratedRed: r / 255, green: g / 255, blue: b / 255, alpha: a)
+func point(_ x: CGFloat, _ y: CGFloat) -> NSPoint {
+    NSPoint(x: x, y: CGFloat(canvasSize) - y)
 }
 
-// 超椭圆：Apple 的图标外形是「连续曲率」的 squircle，n≈5 时最接近
-func squirclePath(cx: CGFloat, cy: CGFloat, size: CGFloat, n: CGFloat = 5.0) -> NSBezierPath {
-    let a = size / 2
-    let e = 2.0 / n
-    let steps = 900
-    let path = NSBezierPath()
-    for i in 0...steps {
-        let t = CGFloat(i) / CGFloat(steps) * 2 * .pi
-        let c = cos(t), s = sin(t)
-        let x = cx + a * (c >= 0 ? 1 : -1) * pow(abs(c), e)
-        let y = cy + a * (s >= 0 ? 1 : -1) * pow(abs(s), e)
-        let pt = P(x, y)
-        if i == 0 { path.move(to: pt) } else { path.line(to: pt) }
+func color(_ hex: UInt32, alpha: CGFloat = 1) -> NSColor {
+    NSColor(
+        srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+        green: CGFloat((hex >> 8) & 0xFF) / 255,
+        blue: CGFloat(hex & 0xFF) / 255,
+        alpha: alpha
+    )
+}
+
+func roundedRect(_ x: CGFloat, _ y: CGFloat, _ width: CGFloat, _ height: CGFloat, radius: CGFloat) -> NSBezierPath {
+    NSBezierPath(
+        roundedRect: NSRect(origin: point(x, y + height), size: NSSize(width: width, height: height)),
+        xRadius: radius, yRadius: radius
+    )
+}
+
+func gradient(_ colors: [NSColor], from start: NSPoint, to end: NSPoint) {
+    // 所有色标均由 sRGB 颜色组成，且至少有两个色标。
+    guard let gradient = NSGradient(colors: colors) else {
+        preconditionFailure("无效的图标渐变")
     }
+    gradient.draw(from: start, to: end, options: [.drawsBeforeStartingLocation, .drawsAfterEndingLocation])
+}
+
+func clipped(to path: NSBezierPath, draw: () -> Void) {
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    path.addClip()
+    draw()
+}
+
+func outline(of path: NSBezierPath, width: CGFloat) -> NSBezierPath {
+    NSBezierPath(cgPath: path.cgPath.copy(
+        strokingWithWidth: width, lineCap: .round, lineJoin: .round, miterLimit: 1
+    ))
+}
+
+func tileOutline() -> NSBezierPath {
+    let path = NSBezierPath()
+    path.move(to: point(327, 100))
+    path.line(to: point(697, 100))
+    path.curve(to: point(924, 327), controlPoint1: point(860, 100), controlPoint2: point(924, 164))
+    path.line(to: point(924, 697))
+    path.curve(to: point(697, 924), controlPoint1: point(924, 860), controlPoint2: point(860, 924))
+    path.line(to: point(327, 924))
+    path.curve(to: point(100, 697), controlPoint1: point(164, 924), controlPoint2: point(100, 860))
+    path.line(to: point(100, 327))
+    path.curve(to: point(327, 100), controlPoint1: point(100, 164), controlPoint2: point(164, 100))
     path.close()
     return path
 }
 
-// 任意圆角多边形（points 自上而下），radii 与 points 一一对应
-func roundedPolygon(_ points: [CGPoint], radii: [CGFloat]) -> NSBezierPath {
+func noteOutline(offsetX x: CGFloat, offsetY y: CGFloat) -> NSBezierPath {
     let path = NSBezierPath()
-    path.move(to: P(points[0].x, points[0].y))
-    for i in 1..<points.count {
-        let corner = P(points[i].x, points[i].y)
-        let nextIdx = (i + 1) % points.count
-        let next = P(points[nextIdx].x, points[nextIdx].y)
-        path.appendArc(from: corner, to: next, radius: radii[i])
-    }
+    path.move(to: point(x + 50, y))
+    path.appendArc(from: point(x + 263, y), to: point(x + 386, y + 123), radius: 17)
+    path.appendArc(from: point(x + 386, y + 123), to: point(x + 386, y + 466), radius: 17)
+    path.appendArc(from: point(x + 386, y + 466), to: point(x, y + 466), radius: 50)
+    path.appendArc(from: point(x, y + 466), to: point(x, y), radius: 50)
+    path.appendArc(from: point(x, y), to: point(x + 263, y), radius: 50)
     path.close()
     return path
 }
 
-let bgTop = rgb(154, 166, 255)
-let bgBottom = rgb(50, 62, 208)
-let paperTop = rgb(255, 255, 255)
-let paperBottom = rgb(231, 237, 249)
-let foldTop = rgb(214, 222, 240)
-let foldBottom = rgb(178, 192, 226)
-let lineColor = rgb(163, 175, 212)
-let titleColor = rgb(96, 110, 212)
+func drawIcon() {
+    let tile = tileOutline()
+    clipped(to: tile) {
+        gradient([color(0x293545), color(0x161E2C), color(0x0B111C)],
+                 from: point(242, 109), to: point(739, 907))
 
-let rep = NSBitmapImageRep(
-    bitmapDataPlanes: nil, pixelsWide: Int(S), pixelsHigh: Int(S),
-    bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
-    colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
-)!
+        let glowCenter = point(451, 363)
+        NSGradient(starting: color(0x408CDD, alpha: 0.34), ending: color(0x408CDD, alpha: 0))?
+            .draw(fromCenter: glowCenter, radius: 0, toCenter: glowCenter, radius: 550, options: [])
 
-NSGraphicsContext.saveGraphicsState()
-NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
-
-let shape = squirclePath(cx: CX, cy: CY, size: SS)
-
-// 1. 底色渐变 + 顶部内高光 + 底部内阴影
-NSGraphicsContext.saveGraphicsState()
-shape.setClip()
-NSGradient(colors: [bgTop, bgBottom])!
-    .draw(from: P(CX, CY - SS / 2), to: P(CX, CY + SS / 2), options: [])
-NSGradient(colors: [rgb(255, 255, 255, 0.30), rgb(255, 255, 255, 0)])!
-    .draw(from: P(CX, CY - SS / 2), to: P(CX, CY - SS / 2 + SS * 0.46), options: [])
-NSGradient(colors: [rgb(0, 0, 0, 0), rgb(0, 0, 0, 0.20)])!
-    .draw(from: P(CX, CY + SS / 2 - SS * 0.42), to: P(CX, CY + SS / 2), options: [])
-NSGraphicsContext.restoreGraphicsState()
-
-// 2. 内侧一圈细高光边
-NSGraphicsContext.saveGraphicsState()
-shape.setClip()
-rgb(255, 255, 255, 0.28).setStroke()
-let rim = shape.copy() as! NSBezierPath
-rim.lineWidth = 7
-rim.stroke()
-NSGraphicsContext.restoreGraphicsState()
-
-// 3. 便签卡片
-let cardW: CGFloat = 430
-let cardH: CGFloat = 520
-let cardX = CX - cardW / 2
-let cardY = CY - cardH / 2 + 4
-let fold: CGFloat = 112
-let r: CGFloat = 54
-
-let cardPoints: [CGPoint] = [
-    CGPoint(x: cardX, y: cardY),
-    CGPoint(x: cardX + cardW - fold, y: cardY),
-    CGPoint(x: cardX + cardW, y: cardY + fold),
-    CGPoint(x: cardX + cardW, y: cardY + cardH),
-    CGPoint(x: cardX, y: cardY + cardH),
-]
-let card = roundedPolygon(cardPoints, radii: [r, 16, 16, r, r])
-
-NSGraphicsContext.saveGraphicsState()
-let shadow = NSShadow()
-shadow.shadowColor = rgb(20, 26, 70, 0.30)
-shadow.shadowBlurRadius = 26
-shadow.shadowOffset = NSSize(width: 0, height: -10)
-shadow.set()
-card.fill()
-NSGraphicsContext.restoreGraphicsState()
-
-NSGraphicsContext.saveGraphicsState()
-card.setClip()
-NSGradient(colors: [paperTop, paperBottom])!
-    .draw(from: P(CX, cardY), to: P(CX, cardY + cardH), options: [])
-NSGraphicsContext.restoreGraphicsState()
-
-// 4. 折角
-let foldPoints: [CGPoint] = [
-    CGPoint(x: cardX + cardW - fold, y: cardY),
-    CGPoint(x: cardX + cardW, y: cardY + fold),
-    CGPoint(x: cardX + cardW - fold, y: cardY + fold),
-]
-let flap = roundedPolygon(foldPoints, radii: [12, 12, 12])
-NSGraphicsContext.saveGraphicsState()
-flap.setClip()
-NSGradient(colors: [foldTop, foldBottom])!
-    .draw(from: P(cardX + cardW - fold, cardY), to: P(cardX + cardW, cardY + fold), options: [])
-NSGraphicsContext.restoreGraphicsState()
-
-// 5. 标题线 + 正文线
-let pad: CGFloat = 44
-let lineX = cardX + pad
-let lineW = cardW - pad * 2
-
-func bar(_ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ color: NSColor) {
-    let p = roundedPolygon([
-        CGPoint(x: x, y: y),
-        CGPoint(x: x + w, y: y),
-        CGPoint(x: x + w, y: y + h),
-        CGPoint(x: x, y: y + h),
-    ], radii: [h / 2, h / 2, h / 2, h / 2])
-    color.setFill()
-    p.fill()
-}
-
-// 标题：稍粗、带一点强调色
-bar(lineX, cardY + 92, 176, 34, titleColor)
-
-// 正文：四行，末行留白收尾
-for i in 0..<4 {
-    let y = cardY + 172 + CGFloat(i) * 76
-    let w = (i == 3) ? lineW * 0.55 : lineW
-    bar(lineX, y, w, 28, lineColor)
-}
-
-NSGraphicsContext.restoreGraphicsState()
-
-// ---- 自检 ----
-if ProcessInfo.processInfo.environment["ASCII"] != nil {
-    let N = 56
-    let ramp = Array(" .:-=+*#%@")
-    var out = ""
-    for r in 0..<N {
-        var line = ""
-        for c in 0..<N {
-            let px = Int((CGFloat(c) + 0.5) * S / CGFloat(N))
-            let py = Int((CGFloat(r) + 0.5) * S / CGFloat(N))
-            let col = rep.colorAt(x: px, y: py)!
-            if col.alphaComponent < 0.15 {
-                line += " "
-            } else {
-                let l = 0.299 * col.redComponent + 0.587 * col.greenComponent + 0.114 * col.blueComponent
-                line += String(ramp[min(Int(l * CGFloat(ramp.count)), ramp.count - 1)])
+        // 低对比度点阵只在大尺寸下可见。
+        color(0xA3CCF4, alpha: 0.14).setFill()
+        for row in 0..<13 {
+            for column in 0..<13 {
+                let origin = point(210 + CGFloat(column) * 50, 214 + CGFloat(row) * 50)
+                NSBezierPath(ovalIn: NSRect(origin: origin, size: NSSize(width: 4, height: 4))).fill()
             }
         }
-        out += line + "\n"
+
+        clipped(to: outline(of: tile, width: 8)) {
+            gradient([color(0xC3DBF5, alpha: 0.59), color(0x7199C5, alpha: 0.26), color(0x426087, alpha: 0.35)],
+                     from: point(512, 100), to: point(512, 924))
+        }
     }
-    print(out)
+
+    // 叠放的第二张卡片，用稍暗的蓝色区分深度。
+    let rear = noteOutline(offsetX: 352, offsetY: 315)
+    clipped(to: rear) {
+        gradient([color(0x2B4F70), color(0x18283B)], from: point(379, 340), to: point(719, 789))
+    }
+    color(0x5C96BE).setStroke()
+    rear.lineWidth = 10
+    rear.stroke()
+
+    let front = noteOutline(offsetX: 282, offsetY: 240)
+    NSGraphicsContext.saveGraphicsState()
+    let shadow = NSShadow()
+    shadow.shadowColor = color(0x060C17, alpha: 0.8)
+    shadow.shadowBlurRadius = 29
+    shadow.shadowOffset = NSSize(width: 0, height: -17)
+    shadow.set()
+    color(0x182A40).setFill()
+    front.fill()
+    NSGraphicsContext.restoreGraphicsState()
+
+    clipped(to: front) {
+        gradient([color(0x365E80), color(0x233D59), color(0x12253C)],
+                 from: point(302, 240), to: point(646, 744))
+
+        let fold = NSBezierPath()
+        fold.move(to: point(539, 229))
+        fold.line(to: point(678, 368))
+        fold.appendArc(from: point(539, 368), to: point(539, 229), radius: 22)
+        fold.close()
+        clipped(to: fold) {
+            gradient([color(0x94E8FC), color(0x388FCE)], from: point(539, 246), to: point(650, 373))
+        }
+    }
+
+    clipped(to: outline(of: front, width: 14)) {
+        gradient([color(0xCEF6FF), color(0x7ED8F5), color(0x5F9FD2)],
+                 from: point(321, 240), to: point(642, 730))
+    }
+
+    color(0xD9F7FF).setFill()
+    roundedRect(348, 403, 128, 39, radius: 19.5).fill()
+    color(0x89B9DB).setFill()
+    roundedRect(348, 483, 252, 32, radius: 16).fill()
+    roundedRect(348, 560, 180, 32, radius: 16).fill()
+    color(0x82F0FC).setFill()
+    NSBezierPath(ovalIn: NSRect(origin: point(562, 596), size: NSSize(width: 40, height: 40))).fill()
 }
 
-let png = rep.representation(using: .png, properties: [:])!
-try! png.write(to: URL(fileURLWithPath: CommandLine.arguments[1]))
-print("已写入 \(CommandLine.arguments[1])")
+enum IconError: Error {
+    case missingOutputPath
+    case imageCreationFailed
+}
+
+func renderIcon(to url: URL) throws {
+    guard let bitmap = NSBitmapImageRep(
+        bitmapDataPlanes: nil, pixelsWide: canvasSize, pixelsHigh: canvasSize,
+        bitsPerSample: 8, samplesPerPixel: 4, hasAlpha: true, isPlanar: false,
+        colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0
+    ), let context = NSGraphicsContext(bitmapImageRep: bitmap) else {
+        throw IconError.imageCreationFailed
+    }
+
+    NSGraphicsContext.saveGraphicsState()
+    defer { NSGraphicsContext.restoreGraphicsState() }
+    NSGraphicsContext.current = context
+    context.cgContext.clear(CGRect(x: 0, y: 0, width: canvasSize, height: canvasSize))
+    drawIcon()
+    guard let png = bitmap.representation(using: .png, properties: [:]) else {
+        throw IconError.imageCreationFailed
+    }
+    try png.write(to: url, options: .atomic)
+}
+
+guard CommandLine.arguments.count == 2 else {
+    throw IconError.missingOutputPath
+}
+try renderIcon(to: URL(fileURLWithPath: CommandLine.arguments[1]))
